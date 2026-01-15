@@ -1,0 +1,8 @@
+{
+  "name": "Cheap Travel - Voyage Agency Portal",
+  "description": "A comprehensive travel agency platform featuring a client-facing booking engine and a dedicated B2B agency portal for ticketing, visas, and organized tours.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
