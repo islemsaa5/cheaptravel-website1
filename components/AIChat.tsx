@@ -2,15 +2,23 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bot, Send, X, Loader2, Sparkles, User, Globe, Moon, ShieldCheck } from 'lucide-react';
 import { getTravelAdvice } from '../services/geminiService';
+import { dbService } from '../services/dbService';
+import { TravelPackage } from '../types';
 
 const AIChat: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<{role: 'user' | 'bot', text: string}[]>([
+  const [messages, setMessages] = useState<{ role: 'user' | 'bot', text: string }[]>([
     { role: 'bot', text: 'Bonjour ! Je suis votre assistant Cheap Travel. Comment puis-je vous aider aujourd\'hui ? (Visa, Omrah, Vols...)' }
   ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [contextData, setContextData] = useState<TravelPackage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Load Context Data on Mount
+  useEffect(() => {
+    dbService.getPackages().then(setContextData).catch(err => console.error("AI Context Load Fail", err));
+  }, []);
 
   // Keyboard shortcut: Close on Escape key
   useEffect(() => {
@@ -36,7 +44,7 @@ const AIChat: React.FC = () => {
     setIsTyping(true);
 
     try {
-      const response = await getTravelAdvice(userMsg);
+      const response = await getTravelAdvice(userMsg, contextData);
       setMessages(prev => [...prev, { role: 'bot', text: response }]);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'bot', text: "Oups, j'ai rencontré un petit problème. Veuillez réessayer." }]);
@@ -55,7 +63,7 @@ const AIChat: React.FC = () => {
     <>
       {/* Trigger Button - Using highest z-index for visibility */}
       {!isOpen && (
-        <button 
+        <button
           onClick={toggleChat}
           className="fixed bottom-10 left-10 z-[1000] w-16 h-16 bg-blue-900 text-white rounded-full shadow-[0_10px_40px_rgba(30,58,138,0.4)] flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
           aria-label="Ouvrir l'assistant IA"
@@ -65,7 +73,7 @@ const AIChat: React.FC = () => {
             <Sparkles size={10} className="text-white" />
           </div>
           <div className="absolute left-full ml-4 bg-white px-4 py-2 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 transition-all pointer-events-none whitespace-nowrap border border-gray-100">
-             <p className="text-[10px] font-black text-blue-900 uppercase tracking-widest">Assistant IA</p>
+            <p className="text-[10px] font-black text-blue-900 uppercase tracking-widest">Assistant IA</p>
           </div>
         </button>
       )}
@@ -73,51 +81,50 @@ const AIChat: React.FC = () => {
       {/* Chat Window - Elevated z-index to ensure it is always on top of other fixed elements */}
       {isOpen && (
         <div className="fixed bottom-10 left-10 z-[1000] w-[calc(100%-40px)] max-w-[400px] h-[600px] max-h-[calc(100vh-80px)] bg-white rounded-[40px] shadow-[0_30px_100px_rgba(0,0,0,0.4)] border border-gray-100 flex flex-col overflow-hidden animate-in slide-in-from-bottom-12 duration-500">
-          
+
           {/* Header */}
           <div className="bg-blue-900 p-6 md:p-8 text-white flex justify-between items-center relative overflow-hidden shrink-0">
-             {/* Background Decoration */}
-             <div className="absolute -top-4 -right-4 p-4 opacity-10 pointer-events-none select-none">
-                <Bot size={120} />
-             </div>
+            {/* Background Decoration */}
+            <div className="absolute -top-4 -right-4 p-4 opacity-10 pointer-events-none select-none">
+              <Bot size={120} />
+            </div>
 
-             <div className="relative z-10 flex items-center space-x-4">
-                <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center border border-white/10">
-                   <Bot size={24} className="text-orange-400" />
+            <div className="relative z-10 flex items-center space-x-4">
+              <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center border border-white/10">
+                <Bot size={24} className="text-orange-400" />
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                  <h3 className="text-lg font-black tracking-tighter uppercase italic">Cheap <span className="text-orange-500">AI</span></h3>
                 </div>
-                <div>
-                   <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                      <h3 className="text-lg font-black tracking-tighter uppercase italic">Cheap <span className="text-orange-500">AI</span></h3>
-                   </div>
-                   <p className="text-blue-200 text-[9px] font-black uppercase tracking-[0.2em]">Assistant Virtuel</p>
-                </div>
-             </div>
+                <p className="text-blue-200 text-[9px] font-black uppercase tracking-[0.2em]">Assistant Virtuel</p>
+              </div>
+            </div>
 
-             {/* Close Button - Enhanced with specific z-index and event propagation block */}
-             <button 
+            {/* Close Button - Enhanced with specific z-index and event propagation block */}
+            <button
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 setIsOpen(false);
-              }} 
+              }}
               className="relative z-[1001] p-3 bg-white/10 hover:bg-orange-500 hover:text-white rounded-2xl transition-all active:scale-90"
               aria-label="Fermer le chat"
               title="Fermer l'assistant"
-             >
-                <X size={24} />
-             </button>
+            >
+              <X size={24} />
+            </button>
           </div>
 
           {/* Messages Area */}
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/50">
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2`}>
-                <div className={`max-w-[85%] p-4 rounded-3xl text-sm leading-relaxed shadow-sm ${
-                  m.role === 'user' 
-                    ? 'bg-blue-900 text-white rounded-tr-none' 
+                <div className={`max-w-[85%] p-4 rounded-3xl text-sm leading-relaxed shadow-sm ${m.role === 'user'
+                    ? 'bg-blue-900 text-white rounded-tr-none'
                     : 'bg-white text-gray-700 border border-gray-100 rounded-tl-none'
-                }`}>
+                  }`}>
                   {m.text}
                 </div>
               </div>
@@ -135,9 +142,9 @@ const AIChat: React.FC = () => {
           {/* Input Area */}
           <div className="p-6 border-t border-gray-100 bg-white shrink-0">
             <div className="flex items-center space-x-3 bg-gray-50 rounded-2xl p-2 focus-within:ring-2 focus-within:ring-blue-900/10 transition-all border border-transparent focus-within:border-blue-900/20">
-              <input 
-                type="text" 
-                placeholder="Comment puis-je vous aider ?" 
+              <input
+                type="text"
+                placeholder="Comment puis-je vous aider ?"
                 className="flex-1 bg-transparent border-none focus:outline-none px-4 py-2 text-sm font-medium text-gray-700 placeholder:text-gray-400"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -148,7 +155,7 @@ const AIChat: React.FC = () => {
                   }
                 }}
               />
-              <button 
+              <button
                 onClick={(e) => {
                   e.preventDefault();
                   handleSend();

@@ -1,18 +1,19 @@
 
 import React, { useState, useMemo } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  AreaChart, Area 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area
 } from 'recharts';
-import { 
-  Users, FileText, TrendingUp, AlertCircle, DollarSign, Briefcase, Plus, 
-  Ticket, Globe, Download, Settings, Lock, ShieldCheck, Wallet, 
+import {
+  Users, FileText, TrendingUp, AlertCircle, DollarSign, Briefcase, Plus,
+  Ticket, Globe, Download, Settings, Lock, ShieldCheck, Wallet,
   LayoutDashboard, History, UserPlus, LogOut, ChevronRight,
   ArrowUpRight, Landmark, Mail, Building2, Fingerprint, ShieldAlert, CheckCircle, Search, ArrowLeft, MessageSquare, FileText as FileIcon
 } from 'lucide-react';
 import { User, Booking, TravelPackage, ServiceType } from '../types';
 import BookingForm from './BookingForm';
 import { WHATSAPP_LINK } from '../constants';
+import { authService } from '../services/authService';
 
 interface AgencySpaceProps {
   user: User | null;
@@ -31,6 +32,7 @@ const AgencySpace: React.FC<AgencySpaceProps> = ({ user, packages, bookings, onL
   const [isLoading, setIsLoading] = useState(false);
   const [view, setView] = useState<'dashboard' | 'booking' | 'form' | 'history'>('dashboard');
   const [selectedPkg, setSelectedPkg] = useState<TravelPackage | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [formData, setFormData] = useState({
     agencyName: '',
@@ -53,29 +55,53 @@ const AgencySpace: React.FC<AgencySpaceProps> = ({ user, packages, bookings, onL
     { name: 'Jun', sales: 7100, profit: 1550 },
   ];
 
-  const handleB2BAuth = (e?: React.FormEvent, directEmail?: string, directPass?: string) => {
+  const handleB2BAuth = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsLoading(true);
 
-    const emailToUse = directEmail || formData.email;
-    const passwordToUse = directPass || formData.password;
+    const emailToUse = formData.email.trim();
+    const passwordToUse = formData.password;
 
-    setTimeout(() => {
-      const isAdmin = emailToUse.toLowerCase() === 'cheaptravel' && passwordToUse === 'cheaptravel123';
-      
-      const mockUser: User = {
-        id: (isAdmin ? 'ADMIN-' : 'AGENT-') + Math.random().toString(36).substr(2, 5).toUpperCase(),
-        fullName: isAdmin ? "Directeur Agence" : (formData.fullName || "Partner Agent"),
-        email: emailToUse,
-        role: isAdmin ? 'ADMIN' : 'AGENT',
-        agencyName: isAdmin ? "Cheap Travel HQ" : (formData.agencyName || "Global Travel Partner"),
-        walletBalance: isAdmin ? 0 : 750000,
-      };
-      
-      localStorage.setItem('ct_user', JSON.stringify(mockUser));
-      onLoginSuccess(mockUser);
+    try {
+      if (isRegistering) {
+        // Register Agent
+        const { user, error } = await authService.register({
+          email: emailToUse,
+          password: passwordToUse,
+          agencyName: formData.agencyName || "Agence Partenaire",
+          isAgent: true
+        });
+
+        if (error) {
+          alert(error);
+          setIsLoading(false);
+          return;
+        }
+        if (user) onLoginSuccess(user);
+
+      } else {
+        // Login Agent
+        const { user, error } = await authService.login(emailToUse, passwordToUse);
+
+        if (error) {
+          alert(error);
+          setIsLoading(false);
+          return;
+        }
+        // Check Role consistency just in case
+        if (user && user.role !== 'AGENT' && user.role !== 'ADMIN') {
+          alert("Ce compte n'est pas un compte Agence.");
+          setIsLoading(false);
+          return;
+        }
+        if (user) onLoginSuccess(user);
+      }
+    } catch (err) {
+      console.error("Auth Error", err);
+      alert("Erreur de connexion.");
+    } finally {
       setIsLoading(false);
-    }, 800);
+    }
   };
 
   const handleStartBooking = (pkg: TravelPackage) => {
@@ -117,7 +143,7 @@ const AgencySpace: React.FC<AgencySpaceProps> = ({ user, packages, bookings, onL
             </div>
             <div className="relative z-10 mt-12 pt-12 border-t border-white/10 flex items-center justify-between">
               <p className="text-[10px] font-black uppercase tracking-widest text-blue-400">Portail Officiel Agence</p>
-              <div className="flex -space-x-3">{[1,2,3,4].map(i => (<div key={i} className="w-8 h-8 rounded-full border-2 border-blue-900 bg-gray-200 overflow-hidden"><img src={`https://i.pravatar.cc/100?u=${i+20}`} alt="Partner" /></div>))}</div>
+              <div className="flex -space-x-3">{[1, 2, 3, 4].map(i => (<div key={i} className="w-8 h-8 rounded-full border-2 border-blue-900 bg-gray-200 overflow-hidden"><img src={`https://i.pravatar.cc/100?u=${i + 20}`} alt="Partner" /></div>))}</div>
             </div>
           </div>
           <div className="lg:w-1/2 p-12 lg:p-16 flex flex-col justify-center bg-gray-50/30">
@@ -128,19 +154,16 @@ const AgencySpace: React.FC<AgencySpaceProps> = ({ user, packages, bookings, onL
                 {isRegistering && (
                   <div className="relative group">
                     <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input required type="text" placeholder="Nom Légal de l'Agence" className="w-full pl-12 pr-4 py-4 bg-white border border-gray-100 rounded-2xl focus:ring-4 focus:ring-blue-900/5 focus:border-blue-900 focus:outline-none font-bold text-blue-900 transition-all text-sm" value={formData.agencyName} onChange={(e) => setFormData({...formData, agencyName: e.target.value})} />
+                    <input required type="text" placeholder="Nom Légal de l'Agence" className="w-full pl-12 pr-4 py-4 bg-white border border-gray-100 rounded-2xl focus:ring-4 focus:ring-blue-900/5 focus:border-blue-900 focus:outline-none font-bold text-blue-900 transition-all text-sm" value={formData.agencyName} onChange={(e) => setFormData({ ...formData, agencyName: e.target.value })} />
                   </div>
                 )}
-                <div className="relative group"><Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} /><input required type="text" placeholder="Email ou Nom d'utilisateur" className="w-full pl-12 pr-4 py-4 bg-white border border-gray-100 rounded-2xl focus:ring-4 focus:ring-blue-900/5 focus:border-blue-900 focus:outline-none font-bold text-blue-900 transition-all text-sm" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} /></div>
-                <div className="relative group"><Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} /><input required type="password" placeholder="Mot de passe" className="w-full pl-12 pr-4 py-4 bg-white border border-gray-100 rounded-2xl focus:ring-4 focus:ring-blue-900/5 focus:border-blue-900 focus:outline-none font-bold text-blue-900 transition-all text-sm" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})} /></div>
+                <div className="relative group"><Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} /><input required type="text" placeholder="Email ou Nom d'utilisateur" className="w-full pl-12 pr-4 py-4 bg-white border border-gray-100 rounded-2xl focus:ring-4 focus:ring-blue-900/5 focus:border-blue-900 focus:outline-none font-bold text-blue-900 transition-all text-sm" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} /></div>
+                <div className="relative group"><Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} /><input required type="password" placeholder="Mot de passe" className="w-full pl-12 pr-4 py-4 bg-white border border-gray-100 rounded-2xl focus:ring-4 focus:ring-blue-900/5 focus:border-blue-900 focus:outline-none font-bold text-blue-900 transition-all text-sm" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} /></div>
                 <button disabled={isLoading} type="submit" className="w-full bg-blue-900 text-white font-black py-5 rounded-2xl hover:bg-black transition-all shadow-xl shadow-blue-900/20 flex items-center justify-center space-x-3 mt-6">{isLoading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : <><span className="uppercase tracking-[0.2em] text-[10px]">{isRegistering ? 'Inscrire l\'agence' : 'Accéder au Portail'}</span><ChevronRight size={18} /></>}</button>
               </form>
               <div className="mt-10 flex flex-col items-center space-y-4">
                 <button onClick={() => setIsRegistering(!isRegistering)} className="text-[10px] font-black text-gray-400 hover:text-blue-900 uppercase tracking-widest transition-colors">{isRegistering ? "Déjà partenaire ? Se connecter" : "Devenir partenaire ? S'inscrire"}</button>
-                <div className="w-full pt-8 mt-4 border-t border-gray-100">
-                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest text-center mb-4 italic">Accès Propriétaire</p>
-                  <button onClick={() => handleB2BAuth(undefined, 'cheaptravel', 'cheaptravel123')} className="w-full flex items-center justify-center space-x-3 text-[10px] font-black text-orange-500 hover:text-orange-600 uppercase tracking-[0.3em] transition-all p-5 border-2 border-dashed border-orange-200 rounded-[32px] bg-orange-50/50 hover:bg-orange-100 active:scale-95"><ShieldAlert size={18} /><span>Lancer Control Admin</span></button>
-                </div>
+
               </div>
             </div>
           </div>
@@ -200,7 +223,7 @@ const AgencySpace: React.FC<AgencySpaceProps> = ({ user, packages, bookings, onL
                     <div key={i} className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm hover:shadow-xl transition-all group overflow-hidden relative"><div className={`p-3 w-fit bg-${stat.color}-50 text-${stat.color}-600 rounded-2xl mb-6`}><stat.icon size={20} /></div><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{stat.label}</p><h3 className="text-3xl font-black text-blue-900 mt-2">{stat.val} <span className="text-xs font-bold">DA</span></h3></div>
                   ))}
                 </div>
-                <div className="bg-white p-10 rounded-[40px] border border-gray-100 shadow-sm"><div className="flex items-center justify-between mb-10"><h3 className="text-xl font-black text-blue-900">Activité Commerciale</h3><span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Temps Réel</span></div><div className="h-[300px]"><ResponsiveContainer width="100%" height="100%"><AreaChart data={revenueData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8', fontWeight: 700}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8', fontWeight: 700}} /><Tooltip contentStyle={{borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.1)'}} /><Area type="monotone" dataKey="sales" stroke="#1e3a8a" strokeWidth={4} fillOpacity={0.1} fill="#1e3a8a" /></AreaChart></ResponsiveContainer></div></div>
+                <div className="bg-white p-10 rounded-[40px] border border-gray-100 shadow-sm"><div className="flex items-center justify-between mb-10"><h3 className="text-xl font-black text-blue-900">Activité Commerciale</h3><span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Temps Réel</span></div><div className="h-[300px]"><ResponsiveContainer width="100%" height="100%"><AreaChart data={revenueData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }} /><Tooltip contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.1)' }} /><Area type="monotone" dataKey="sales" stroke="#1e3a8a" strokeWidth={4} fillOpacity={0.1} fill="#1e3a8a" /></AreaChart></ResponsiveContainer></div></div>
               </div>
               <div className="space-y-8">
                 <div className="bg-white p-8 rounded-[40px] border border-gray-100 shadow-sm">
@@ -208,14 +231,14 @@ const AgencySpace: React.FC<AgencySpaceProps> = ({ user, packages, bookings, onL
                   <div className="space-y-3">
                     {[{ label: 'Groupe Visa', icon: UserPlus }, { label: 'Mes Agents', icon: Users }, { label: 'Factures GDS', icon: FileText }].map((action, i) => (<button key={i} className="w-full flex items-center p-5 bg-gray-50 hover:bg-blue-50 border border-transparent rounded-3xl transition-all text-left"><div className="p-3 bg-white text-blue-900 rounded-2xl shadow-sm"><action.icon size={18} /></div><span className="ml-4 text-xs font-black text-blue-900 tracking-tight">{action.label}</span><ArrowUpRight size={16} className="ml-auto text-gray-300" /></button>))}
                     <a href={WHATSAPP_LINK} target="_blank" className="w-full flex items-center p-5 bg-green-50 hover:bg-green-100 border border-transparent rounded-3xl transition-all text-left">
-                       <div className="p-3 bg-white text-[#25D366] rounded-2xl shadow-sm"><MessageSquare size={18} /></div>
-                       <span className="ml-4 text-xs font-black text-[#25D366] tracking-tight">Support Siège (WhatsApp)</span>
+                      <div className="p-3 bg-white text-[#25D366] rounded-2xl shadow-sm"><MessageSquare size={18} /></div>
+                      <span className="ml-4 text-xs font-black text-[#25D366] tracking-tight">Support Siège (WhatsApp)</span>
                     </a>
                     {/* Integrated onNavigateBilleterie into a quick action button */}
                     <button onClick={onNavigateBilleterie} className="w-full flex items-center p-5 bg-blue-50 hover:bg-blue-100 border border-transparent rounded-3xl transition-all text-left">
-                       <div className="p-3 bg-white text-blue-900 rounded-2xl shadow-sm"><Ticket size={18} /></div>
-                       <span className="ml-4 text-xs font-black text-blue-900 tracking-tight">Accéder à la Billeterie</span>
-                       <ChevronRight size={16} className="ml-auto text-gray-300" />
+                      <div className="p-3 bg-white text-blue-900 rounded-2xl shadow-sm"><Ticket size={18} /></div>
+                      <span className="ml-4 text-xs font-black text-blue-900 tracking-tight">Accéder à la Billeterie</span>
+                      <ChevronRight size={16} className="ml-auto text-gray-300" />
                     </button>
                   </div>
                 </div>
@@ -242,27 +265,26 @@ const AgencySpace: React.FC<AgencySpaceProps> = ({ user, packages, bookings, onL
                       <tr key={bk.id} className="group hover:bg-gray-50 transition-all">
                         <td className="px-6 py-6 font-bold text-blue-900">#{bk.id}</td>
                         <td className="px-6 py-6">
-                           <p className="text-sm font-bold text-blue-900">{bk.customerName}</p>
-                           <p className="text-[9px] text-gray-400 font-medium">{bk.date}</p>
+                          <p className="text-sm font-bold text-blue-900">{bk.customerName}</p>
+                          <p className="text-[9px] text-gray-400 font-medium">{bk.date}</p>
                         </td>
                         <td className="px-6 py-6">
-                           <span className="text-[10px] font-black uppercase tracking-widest bg-gray-100 px-3 py-1 rounded-lg">
-                              {bk.service}
-                           </span>
+                          <span className="text-[10px] font-black uppercase tracking-widest bg-gray-100 px-3 py-1 rounded-lg">
+                            {bk.service}
+                          </span>
                         </td>
                         <td className="px-6 py-6">
-                          <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${
-                            bk.status === 'Confirmed' ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'
-                          }`}>
+                          <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${bk.status === 'Confirmed' ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'
+                            }`}>
                             {bk.status}
                           </span>
                         </td>
                         <td className="px-6 py-6 text-right">
                           <div className="flex items-center justify-end space-x-3">
-                             <button onClick={() => onViewVoucher(bk)} className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-900 hover:text-white transition-all">
-                                <FileIcon size={14} />
-                             </button>
-                             <span className="text-sm font-black text-blue-900">{bk.amount.toLocaleString()} DA</span>
+                            <button onClick={() => onViewVoucher(bk)} className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-900 hover:text-white transition-all">
+                              <FileIcon size={14} />
+                            </button>
+                            <span className="text-sm font-black text-blue-900">{bk.amount.toLocaleString()} DA</span>
                           </div>
                         </td>
                       </tr>
@@ -278,58 +300,58 @@ const AgencySpace: React.FC<AgencySpaceProps> = ({ user, packages, bookings, onL
 
           {view === 'booking' && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-               <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-3xl font-black text-blue-900 tracking-tighter">Catalogue B2B</h3>
-                    <p className="text-gray-400 text-sm font-medium">Réservez instantanément pour vos clients finaux</p>
-                  </div>
-                  <div className="relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                    <input type="text" placeholder="Chercher un voyage..." className="bg-white border border-gray-100 rounded-2xl pl-12 pr-6 py-3 text-sm focus:outline-none focus:ring-4 focus:ring-blue-900/5 transition-all w-64" />
-                  </div>
-               </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-3xl font-black text-blue-900 tracking-tighter">Catalogue B2B</h3>
+                  <p className="text-gray-400 text-sm font-medium">Réservez instantanément pour vos clients finaux</p>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <input type="text" placeholder="Chercher un voyage..." className="bg-white border border-gray-100 rounded-2xl pl-12 pr-6 py-3 text-sm focus:outline-none focus:ring-4 focus:ring-blue-900/5 transition-all w-64" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                </div>
+              </div>
 
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                  {packages.map(pkg => (
-                    <div key={pkg.id} className="bg-white rounded-[40px] overflow-hidden shadow-xl border border-gray-100 group">
-                      <div className="h-56 relative overflow-hidden">
-                        <img src={pkg.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-[2s]" />
-                        <div className="absolute top-4 left-4 bg-orange-500 text-white text-[8px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest">{pkg.type.replace('_', ' ')}</div>
-                      </div>
-                      <div className="p-8">
-                        <h4 className="text-xl font-black text-blue-900 mb-2 truncate">{pkg.title}</h4>
-                        <p className="text-gray-400 text-xs mb-6 line-clamp-2">{pkg.description}</p>
-                        <div className="flex items-center justify-between pt-6 border-t border-gray-50">
-                          <div>
-                            <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1">Prix Agence</span>
-                            <span className="text-xl font-black text-blue-900">{((pkg.priceAdult || pkg.price) * 0.95).toLocaleString()} DA</span>
-                          </div>
-                          <button onClick={() => handleStartBooking(pkg)} className="bg-orange-500 hover:bg-black text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all">Réserver</button>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {packages.filter(pkg => pkg.title.toLowerCase().includes(searchQuery.toLowerCase()) || pkg.type.toLowerCase().includes(searchQuery.toLowerCase())).map(pkg => (
+                  <div key={pkg.id} className="bg-white rounded-[40px] overflow-hidden shadow-xl border border-gray-100 group">
+                    <div className="h-56 relative overflow-hidden">
+                      <img src={pkg.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-[2s]" />
+                      <div className="absolute top-4 left-4 bg-orange-500 text-white text-[8px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest">{pkg.type.replace('_', ' ')}</div>
+                    </div>
+                    <div className="p-8">
+                      <h4 className="text-xl font-black text-blue-900 mb-2 truncate">{pkg.title}</h4>
+                      <p className="text-gray-400 text-xs mb-6 line-clamp-2">{pkg.description}</p>
+                      <div className="flex items-center justify-between pt-6 border-t border-gray-50">
+                        <div>
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest block mb-1">Prix Agence</span>
+                          <span className="text-xl font-black text-blue-900">{((pkg.priceAdult || pkg.price) * 0.95).toLocaleString()} DA</span>
                         </div>
+                        <button onClick={() => handleStartBooking(pkg)} className="bg-orange-500 hover:bg-black text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all">Réserver</button>
                       </div>
                     </div>
-                  ))}
-               </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
           {view === 'form' && selectedPkg && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-               <button onClick={() => setView('booking')} className="flex items-center space-x-2 text-blue-900 font-black text-[10px] uppercase tracking-widest mb-8 hover:translate-x-[-4px] transition-transform">
-                  <ArrowLeft size={16} />
-                  <span>Retour au catalogue</span>
-               </button>
-               <BookingForm 
-                  initialService={selectedPkg.type} 
-                  packageName={selectedPkg.title} 
-                  packageId={selectedPkg.id} 
-                  initialBasePrice={(selectedPkg.priceAdult || selectedPkg.price) * 0.95} 
-                  priceAdult={(selectedPkg.priceAdult || selectedPkg.price) * 0.95}
-                  priceChild={selectedPkg.priceChild ? selectedPkg.priceChild * 0.95 : undefined}
-                  priceBaby={selectedPkg.priceBaby ? selectedPkg.priceBaby * 0.95 : undefined}
-                  availableStock={selectedPkg.stock} 
-                  onSuccess={handleBookingSuccess} 
-               />
+              <button onClick={() => setView('booking')} className="flex items-center space-x-2 text-blue-900 font-black text-[10px] uppercase tracking-widest mb-8 hover:translate-x-[-4px] transition-transform">
+                <ArrowLeft size={16} />
+                <span>Retour au catalogue</span>
+              </button>
+              <BookingForm
+                initialService={selectedPkg.type}
+                packageName={selectedPkg.title}
+                packageId={selectedPkg.id}
+                initialBasePrice={(selectedPkg.priceAdult || selectedPkg.price) * 0.95}
+                priceAdult={(selectedPkg.priceAdult || selectedPkg.price) * 0.95}
+                priceChild={selectedPkg.priceChild ? selectedPkg.priceChild * 0.95 : undefined}
+                priceBaby={selectedPkg.priceBaby ? selectedPkg.priceBaby * 0.95 : undefined}
+                availableStock={selectedPkg.stock}
+                onSuccess={handleBookingSuccess}
+              />
             </div>
           )}
         </div>

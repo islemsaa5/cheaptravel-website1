@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { X, Mail, Lock, User, ChevronRight, ShieldCheck, AlertCircle, Fingerprint } from 'lucide-react';
 import { UserRole, User as UserType } from '../types';
-import { dbService } from '../services/dbService';
+import { authService } from '../services/authService';
 
 interface AuthOverlayProps {
   onClose: () => void;
@@ -14,7 +14,7 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
   const [isLogin, setIsLogin] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  
+
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -29,59 +29,30 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
     const cleanEmail = formData.email.trim().toLowerCase();
 
     try {
-      // --- MODE CONNEXION ---
       if (isLogin) {
-        // 1. Vérification Admin Backdoor
-        if (cleanEmail === 'cheaptravel' && formData.password === 'cheaptravel123') {
-           const adminUser: UserType = {
-             id: 'ADMIN-MASTER',
-             fullName: 'Directeur Cheap Travel',
-             email: 'cheaptravel',
-             role: 'ADMIN',
-             walletBalance: 0
-           };
-           localStorage.setItem('ct_user', JSON.stringify(adminUser));
-           onSuccess(adminUser);
-           return;
+        // LOGIN
+        const { user, error } = await authService.login(cleanEmail, formData.password);
+        if (error) {
+          setErrorMsg(error);
+        } else if (user) {
+          onSuccess(user);
         }
-
-        // 2. Vérification existence réelle dans Supabase
-        console.log("Recherche du compte pour:", cleanEmail);
-        const userProfile = await dbService.getProfileByEmail(cleanEmail);
-        
-        if (userProfile) {
-          // Succès: Le compte existe
-          localStorage.setItem('ct_user', JSON.stringify(userProfile));
-          onSuccess(userProfile);
-        } else {
-          // Échec: Le compte n'existe PAS
-          setErrorMsg("Ce compte n'existe pas. Veuillez vous inscrire d'abord.");
-        }
-      } 
-      // --- MODE INSCRIPTION ---
-      else {
-        const existingProfile = await dbService.getProfileByEmail(cleanEmail);
-        
-        if (existingProfile) {
-          setErrorMsg("Cet email est déjà enregistré. Veuillez vous connecter.");
-        } else {
-          const userId = 'USER-' + btoa(cleanEmail).slice(0, 8).toUpperCase();
-          const newProfile: UserType = {
-            id: userId,
-            fullName: formData.fullName || 'Voyageur Algérien',
-            email: cleanEmail,
-            role: 'CLIENT',
-            walletBalance: 0
-          };
-          
-          await dbService.updateProfile(newProfile);
-          localStorage.setItem('ct_user', JSON.stringify(newProfile));
-          onSuccess(newProfile);
+      } else {
+        // REGISTER
+        const { user, error } = await authService.register({
+          email: cleanEmail,
+          password: formData.password,
+          fullName: formData.fullName
+        });
+        if (error) {
+          setErrorMsg(error);
+        } else if (user) {
+          onSuccess(user);
         }
       }
     } catch (error) {
       console.error("Auth error:", error);
-      setErrorMsg("Connexion à la base de données impossible.");
+      setErrorMsg("Erreur système. Veuillez réessayer.");
     } finally {
       setIsLoading(false);
     }
@@ -90,7 +61,7 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-blue-900/40 backdrop-blur-md" onClick={onClose}></div>
-      
+
       <div className="relative w-full max-w-xl bg-white rounded-[48px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
         <div className="flex flex-col md:flex-row h-full">
           {/* Left Side: Branding */}
@@ -98,7 +69,7 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
             <div className="absolute top-0 right-0 p-8 opacity-10">
               <Fingerprint size={180} />
             </div>
-            
+
             <div className="relative z-10">
               <div className="text-xl font-black mb-12 tracking-tighter uppercase italic">
                 Cheap <span className={isLogin ? 'text-orange-500' : 'text-blue-900'}>Travel</span>
@@ -125,7 +96,7 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
             </div>
 
             <div className="mb-8">
-               <h3 className="text-2xl font-black text-blue-900 leading-none">
+              <h3 className="text-2xl font-black text-blue-900 leading-none">
                 {isLogin ? 'Connexion' : 'Inscription'}
               </h3>
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-2">
@@ -145,13 +116,13 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
                 <div className="space-y-1">
                   <div className="relative">
                     <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                    <input 
+                    <input
                       required
                       type="text"
                       placeholder="Nom Complet"
                       className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-transparent focus:border-orange-500/10 focus:bg-white rounded-2xl text-sm font-bold transition-all"
                       value={formData.fullName}
-                      onChange={(e) => setFormData({...formData, fullName: e.target.value})}
+                      onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
                     />
                   </div>
                 </div>
@@ -160,13 +131,13 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
               <div className="space-y-1">
                 <div className="relative">
                   <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                  <input 
+                  <input
                     required
                     type="text"
                     placeholder="Adresse Email"
                     className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-transparent focus:border-blue-900/10 focus:bg-white rounded-2xl text-sm font-bold transition-all"
                     value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   />
                 </div>
               </div>
@@ -174,20 +145,20 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
               <div className="space-y-1">
                 <div className="relative">
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                  <input 
+                  <input
                     required
                     type="password"
                     placeholder="Mot de passe"
                     className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-transparent focus:border-blue-900/10 focus:bg-white rounded-2xl text-sm font-bold transition-all"
                     value={formData.password}
-                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   />
                 </div>
               </div>
 
-              <button 
+              <button
                 disabled={isLoading}
-                type="submit" 
+                type="submit"
                 className={`w-full text-white font-black py-5 rounded-2xl transition-all shadow-xl active:scale-95 flex items-center justify-center space-x-3 mt-4 ${isLogin ? 'bg-blue-900 shadow-blue-900/20 hover:bg-black' : 'bg-orange-600 shadow-orange-600/20 hover:bg-black'}`}
               >
                 {isLoading ? (
@@ -203,13 +174,13 @@ const AuthOverlay: React.FC<AuthOverlayProps> = ({ onClose, onSuccess, initialRo
               </button>
             </form>
 
-            <div className="mt-8 text-center">
-              <button 
+            <div className="mt-8 flex flex-col items-center space-y-4">
+              <button
                 onClick={() => {
                   setIsLogin(!isLogin);
                   setErrorMsg(null);
                 }}
-                className="text-[10px] font-black text-gray-400 hover:text-blue-900 uppercase tracking-[0.2em] transition-colors"
+                className="text-xs font-black text-gray-500 hover:text-blue-900 uppercase tracking-[0.2em] transition-colors py-2 px-4 hover:bg-gray-50 rounded-xl"
               >
                 {isLogin ? "Pas de compte ? Créer un profil" : "Déjà membre ? Se connecter"}
               </button>

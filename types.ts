@@ -15,6 +15,8 @@ export interface User {
   agencyName?: string;
   avatar?: string;
   walletBalance: number;
+  password?: string; // For simple auth demo
+  status?: 'PENDING' | 'APPROVED' | 'REJECTED'; // For B2B approval
 }
 
 export type ServiceType = 'VISA' | 'E-VISA' | 'VOYAGE_ORGANISE' | 'OMRAH' | 'BILLETERIE';
@@ -49,6 +51,7 @@ export interface TravelPackage {
   itinerary?: ItineraryDay[];
   inclusions?: string[];
   exclusions?: string[];
+  isDeleted?: boolean;
 }
 
 export type Traveler = {
@@ -76,7 +79,7 @@ export interface Booking {
   agencyId?: string;
   agencyName?: string;
   paymentMethod?: PaymentMethod;
-  paymentProof?: string; 
+  paymentProof?: string;
 }
 
 export interface Testimonial {

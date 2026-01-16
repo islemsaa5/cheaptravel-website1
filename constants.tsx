@@ -5,6 +5,10 @@ import { ServiceType, TravelPackage } from './types';
 
 export const LOGO_URL = "https://i.ibb.co/VqV9kPd/cheap-travel-logo.png";
 export const WHATSAPP_NUMBER = "213540747040";
+export const AGENCY_ADDRESS = "Lot c villa 41, Draria 16000";
+export const AGENCY_EMAIL = "cheaptravel@gmail.com";
+export const INSTAGRAM_URL = "https://www.instagram.com/cheap.travel_/";
+export const FACEBOOK_URL = "https://web.facebook.com/p/Cheap-travel-100083630716284/";
 export const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER}`;
 
 export const formatWhatsAppMessage = (text: string) => {
@@ -12,34 +16,34 @@ export const formatWhatsAppMessage = (text: string) => {
 };
 
 export const SERVICES_LIST: { type: ServiceType; label: string; icon: React.ReactNode; description: string }[] = [
-  { 
-    type: 'BILLETERIE', 
-    label: 'Billeterie', 
-    icon: <Ticket className="w-6 h-6" />, 
+  {
+    type: 'BILLETERIE',
+    label: 'Billeterie',
+    icon: <Ticket className="w-6 h-6" />,
     description: 'Réservation de vols nationaux et internationaux connectée aux tarifs officiels.'
   },
-  { 
-    type: 'VISA', 
-    label: 'Service Visa', 
-    icon: <ShieldCheck className="w-6 h-6" />, 
+  {
+    type: 'VISA',
+    label: 'Service Visa',
+    icon: <ShieldCheck className="w-6 h-6" />,
     description: 'Assistance visa fiable pour toutes les destinations mondiales.'
   },
-  { 
-    type: 'E-VISA', 
-    label: 'E-Visa', 
-    icon: <Globe className="w-6 h-6" />, 
+  {
+    type: 'E-VISA',
+    label: 'E-Visa',
+    icon: <Globe className="w-6 h-6" />,
     description: 'Traitement rapide des visas numériques depuis chez vous.'
   },
-  { 
-    type: 'VOYAGE_ORGANISE', 
-    label: 'Voyage Organisé', 
-    icon: <Plane className="w-6 h-6" />, 
+  {
+    type: 'VOYAGE_ORGANISE',
+    label: 'Voyage Organisé',
+    icon: <Plane className="w-6 h-6" />,
     description: 'Circuits de groupe et forfaits personnalisés avec guides experts.'
   },
-  { 
-    type: 'OMRAH', 
-    label: 'Omrah', 
-    icon: <Moon className="w-6 h-6" />, 
+  {
+    type: 'OMRAH',
+    label: 'Omrah',
+    icon: <Moon className="w-6 h-6" />,
     description: 'Séjours spirituels avec hébergement premium et encadrement.'
   },
 ];
@@ -81,4 +85,17 @@ export const MOCK_PACKAGES: TravelPackage[] = [
     duration: '7 Jours',
     stock: 45
   },
+  {
+    id: '4',
+    title: 'Omrah Ramadan 2024',
+    description: 'Vols directs Air Algérie. Hôtels Ayed Ajyad (300m Haram). Tarifs spéciaux pour les 15 premiers jours et 15 derniers jours.',
+    price: 339000,
+    priceAdult: 339000, // starting price
+    priceChild: 250000,
+    priceBaby: 80000,
+    image: '/omrah_ramadan.png', // Uses the uploaded image we moved to public/
+    type: 'OMRAH' as ServiceType,
+    duration: '15/30 Jours',
+    stock: 50
+  }
 ];
