@@ -65,7 +65,7 @@ const AIChat: React.FC = () => {
       {!isOpen && (
         <button
           onClick={toggleChat}
-          className="fixed bottom-10 left-10 z-[1000] w-16 h-16 bg-blue-900 text-white rounded-full shadow-[0_10px_40px_rgba(30,58,138,0.4)] flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
+          className="fixed bottom-6 left-6 md:bottom-10 md:left-10 z-[1000] w-14 h-14 md:w-16 md:h-16 bg-blue-900 text-white rounded-full shadow-[0_10px_40px_rgba(30,58,138,0.4)] flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
           aria-label="Ouvrir l'assistant IA"
         >
           <Bot size={28} />
@@ -80,7 +80,7 @@ const AIChat: React.FC = () => {
 
       {/* Chat Window - Elevated z-index to ensure it is always on top of other fixed elements */}
       {isOpen && (
-        <div className="fixed bottom-10 left-10 z-[1000] w-[calc(100%-40px)] max-w-[400px] h-[600px] max-h-[calc(100vh-80px)] bg-white rounded-[40px] shadow-[0_30px_100px_rgba(0,0,0,0.4)] border border-gray-100 flex flex-col overflow-hidden animate-in slide-in-from-bottom-12 duration-500">
+        <div className="fixed bottom-6 left-6 md:bottom-10 md:left-10 z-[1000] w-[calc(100%-40px)] max-w-[400px] h-[600px] max-h-[calc(100vh-80px)] bg-white rounded-[40px] shadow-[0_30px_100px_rgba(0,0,0,0.4)] border border-gray-100 flex flex-col overflow-hidden animate-in slide-in-from-bottom-12 duration-500">
 
           {/* Header */}
           <div className="bg-blue-900 p-6 md:p-8 text-white flex justify-between items-center relative overflow-hidden shrink-0">
@@ -122,8 +122,8 @@ const AIChat: React.FC = () => {
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2`}>
                 <div className={`max-w-[85%] p-4 rounded-3xl text-sm leading-relaxed shadow-sm ${m.role === 'user'
-                    ? 'bg-blue-900 text-white rounded-tr-none'
-                    : 'bg-white text-gray-700 border border-gray-100 rounded-tl-none'
+                  ? 'bg-blue-900 text-white rounded-tr-none'
+                  : 'bg-white text-gray-700 border border-gray-100 rounded-tl-none'
                   }`}>
                   {m.text}
                 </div>

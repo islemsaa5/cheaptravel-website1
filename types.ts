@@ -15,8 +15,11 @@ export interface User {
   agencyName?: string;
   avatar?: string;
   walletBalance: number;
+  markupPreference?: number; // Custom margin for B2B agents
   password?: string; // For simple auth demo
   status?: 'PENDING' | 'APPROVED' | 'REJECTED'; // For B2B approval
+  agencyAddress?: string;
+  agencyPhone?: string;
 }
 
 export type ServiceType = 'VISA' | 'E-VISA' | 'VOYAGE_ORGANISE' | 'OMRAH' | 'BILLETERIE';
@@ -52,6 +55,7 @@ export interface TravelPackage {
   inclusions?: string[];
   exclusions?: string[];
   isDeleted?: boolean;
+  isB2BOnly?: boolean; // If true, only visible to agents
 }
 
 export type Traveler = {
@@ -80,6 +84,7 @@ export interface Booking {
   agencyName?: string;
   paymentMethod?: PaymentMethod;
   paymentProof?: string;
+  notes?: string;
 }
 
 export interface Testimonial {
@@ -88,4 +93,106 @@ export interface Testimonial {
   comment: string;
   rating: number;
   location: string;
+}
+
+export interface WalletRequest {
+  id: string;
+  agencyId: string;
+  agencyName: string;
+  amount: number;
+  proofImage: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt: string;
+}
+
+// ============================================
+// EXTENDED TYPES FOR CLIENT CONSOLE
+// ============================================
+
+export interface VisaApplication {
+  id: string;
+  userId: string;
+  country: string;
+  countryCode: string;
+  applicationNumber: string;
+  status: 'PENDING' | 'IN_PROGRESS' | 'APPROVED' | 'REJECTED' | 'SUBMITTED';
+  applicationType: string;
+  deadline?: string;
+  submissionDate?: string;
+  approvalDate?: string;
+  documentsSubmitted: boolean;
+  notes?: string;
+  feeAmount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface UserActivity {
+  id: string;
+  userId: string;
+  activityType: string;
+  activityDescription: string;
+  metadata?: any;
+  createdAt: string;
+}
+
+export interface LoyaltyPoints {
+  id: string;
+  userId: string;
+  pointsBalance: number;
+  lifetimePoints: number;
+  tier: 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface LoyaltyTransaction {
+  id: string;
+  userId: string;
+  pointsChange: number;
+  transactionType: string;
+  description?: string;
+  referenceId?: string;
+  createdAt: string;
+}
+
+export interface WalletTransaction {
+  id: string;
+  userId: string;
+  amount: number;
+  transactionType: 'DEPOSIT' | 'WITHDRAWAL' | 'PAYMENT' | 'REFUND' | 'BONUS';
+  status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  description?: string;
+  referenceId?: string;
+  paymentMethod?: string;
+  createdAt: string;
+}
+
+export interface Trip {
+  id: string;
+  userId: string;
+  destination: string;
+  destinationCountry: string;
+  tripType: string;
+  startDate: string;
+  endDate: string;
+  status: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED';
+  totalPrice: number;
+  bookingReference?: string;
+  includesFlight: boolean;
+  includesHotel: boolean;
+  includesVisa: boolean;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AppNotification {
+  id: string;
+  type: 'BOOKING' | 'WALLET' | 'AGENCY' | 'SYSTEM' | 'SETTINGS' | 'REPORT';
+  title: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+  link?: string;
 }

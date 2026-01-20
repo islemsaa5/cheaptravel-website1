@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Plane, Globe, ShieldCheck, Moon, Ticket, Briefcase, User } from 'lucide-react';
-import { ServiceType, TravelPackage } from './types';
+import { ServiceType, TravelPackage, Booking } from './types';
 
 export const LOGO_URL = "https://i.ibb.co/VqV9kPd/cheap-travel-logo.png";
 export const WHATSAPP_NUMBER = "213540747040";
@@ -97,5 +97,40 @@ export const MOCK_PACKAGES: TravelPackage[] = [
     type: 'OMRAH' as ServiceType,
     duration: '15/30 Jours',
     stock: 50
+  }
+];
+
+export const MOCK_BOOKINGS: Booking[] = [
+  {
+    id: 'BK-Z7R2X',
+    customerName: 'Khellaf Amine',
+    service: 'BILLETERIE',
+    status: 'Confirmed',
+    date: '2024-01-15',
+    amount: 45800,
+    contact: 'amine@email.com',
+    travelers: []
+  },
+  {
+    id: 'BK-L9P4M',
+    customerName: 'Boudiaf Sarah',
+    service: 'OMRAH',
+    status: 'Pending',
+    date: '2024-01-18',
+    amount: 339000,
+    contact: '0550112233',
+    travelers: [],
+    agencyName: 'Magic Tours Algérie',
+    agencyId: 'agent-1'
+  },
+  {
+    id: 'BK-Q2S8T',
+    customerName: 'Mansouri Sidali',
+    service: 'VISA',
+    status: 'Completed',
+    date: '2024-01-10',
+    amount: 15500,
+    contact: 'sidali@pro.dz',
+    travelers: []
   }
 ];

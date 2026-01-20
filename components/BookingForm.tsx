@@ -1,15 +1,15 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
-  User, Mail, Phone, MapPin, Calendar, CreditCard, Upload, Camera,
+  User as UserIcon, Mail, Phone, MapPin, Calendar, CreditCard, Upload, Camera,
   FileCheck, ChevronRight, Plane, Plus, Minus, Users, ShieldCheck,
   Trash2, Fingerprint, Map as MapIcon, AlertTriangle, MoveRight,
   Landmark, Wallet, CheckCircle2, QrCode, Lock, ChevronLeft, CreditCard as CardIcon,
-  // Added missing Building2 import
-  Building2
+  Building2, Loader2, Sparkles, Receipt
 } from 'lucide-react';
 import PassportScanner from './PassportScanner';
-import { ServiceType, Booking, Traveler, PaymentMethod } from '../types';
+import { ServiceType, Booking, Traveler, PaymentMethod, User } from '../types';
+import { flightApi, FlightOffer } from '../services/flightApiService';
 
 interface BookingFormProps {
   initialService?: ServiceType;
@@ -22,6 +22,10 @@ interface BookingFormProps {
   availableStock?: number;
   onSuccess: (booking: Partial<Booking>) => void;
   initialAdults?: number;
+  initialChildren?: number;
+  initialInfants?: number;
+  flightOffer?: FlightOffer;
+  user?: User | null;
 }
 
 const BookingForm: React.FC<BookingFormProps> = ({
@@ -34,18 +38,24 @@ const BookingForm: React.FC<BookingFormProps> = ({
   priceBaby,
   availableStock = 999,
   onSuccess,
-  initialAdults = 1
+  initialAdults = 1,
+  initialChildren = 0,
+  initialInfants = 0,
+  flightOffer,
+  user
 }) => {
   // Step logic: Skip passenger count if it's a flight (BILLETERIE)
   const [step, setStep] = useState(initialService === 'BILLETERIE' ? 2 : 1);
   const [showScanner, setShowScanner] = useState(false);
   const [activeScannerIndex, setActiveScannerIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [gdsResult, setGdsResult] = useState<any | null>(null);
 
   const [travelerCounts, setTravelerCounts] = useState({
     adults: initialAdults,
-    children: 0,
-    babies: 0
+    children: initialChildren,
+    babies: initialInfants
   });
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CIB_EDAHABIA');
@@ -126,22 +136,43 @@ const BookingForm: React.FC<BookingFormProps> = ({
   }, [travelerCounts]);
 
   const actualPriceAdult = priceAdult || initialBasePrice;
-  const actualPriceChild = priceChild || (actualPriceAdult * 0.75); // Adjusted ratio if needed, sticking to previous 0.7 approx or explicit
+  const actualPriceChild = priceChild || (actualPriceAdult * 0.75);
   const actualPriceBaby = priceBaby || (actualPriceAdult * 0.25);
 
   const totalPrice = useMemo(() => {
+    // For Flights (BILLETERIE), the price passed is already the TOTAL (base + 3000 DA flat margin)
+    if (initialService === 'BILLETERIE') {
+      return Math.round(initialBasePrice);
+    }
+
+    // For Organized Trips and others, keep per-passenger logic
     return Math.round(
       (travelerCounts.adults * actualPriceAdult) +
       (travelerCounts.children * actualPriceChild) +
       (travelerCounts.babies * actualPriceBaby)
     );
-  }, [travelerCounts, actualPriceAdult, actualPriceChild, actualPriceBaby]);
+  }, [initialService, travelerCounts, initialBasePrice, actualPriceAdult, actualPriceChild, actualPriceBaby]);
 
   const handlePassportCapture = (data: string) => {
     if (activeScannerIndex !== null) {
-      const updated = [...travelerDetails];
-      updated[activeScannerIndex] = { ...updated[activeScannerIndex], passportImage: data };
-      setTravelerDetails(updated);
+      try {
+        const parsed = JSON.parse(data);
+        const updated = [...travelerDetails];
+        updated[activeScannerIndex] = {
+          ...updated[activeScannerIndex],
+          firstName: parsed.firstName || updated[activeScannerIndex].firstName,
+          lastName: parsed.lastName || updated[activeScannerIndex].lastName,
+          dateOfBirth: parsed.dateOfBirth || updated[activeScannerIndex].dateOfBirth,
+          passportNumber: parsed.passportNumber || updated[activeScannerIndex].passportNumber,
+          passportImage: parsed.image
+        };
+        setTravelerDetails(updated);
+      } catch (err) {
+        // Fallback if data is just raw image (legacy)
+        const updated = [...travelerDetails];
+        updated[activeScannerIndex] = { ...updated[activeScannerIndex], passportImage: data };
+        setTravelerDetails(updated);
+      }
     }
   };
 
@@ -154,39 +185,62 @@ const BookingForm: React.FC<BookingFormProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsProcessing(true);
+    setFormErrors([]);
+
+    let pnr = undefined;
+
+    // Real Reservation if it's a Flight
+    if (initialService === 'BILLETERIE' && flightOffer) {
+      try {
+        const order = await flightApi.confirmFlightOrder(flightOffer, travelerDetails, contactData);
+        pnr = order.data.id; // Amadeus Flight Order ID
+        setGdsResult(order.data);
+        console.log("REAL BOOKING SUCCESS - PNR:", pnr);
+      } catch (err: any) {
+        setFormErrors([err.message || "Erreur lors de la réservation réelle chez la compagnie."]);
+        setIsProcessing(false);
+        return;
+      }
+    }
 
     const newBooking: Partial<Booking> = {
       customerName: `${travelerDetails[0]?.firstName || 'Client'} ${travelerDetails[0]?.lastName || 'Travel'}`,
       service: initialService as ServiceType,
       packageId: packageId,
       amount: totalPrice,
-      status: 'Pending',
+      status: pnr ? 'Confirmed' : 'Pending',
       date: new Date().toISOString().split('T')[0],
       contact: `${contactData.email} | ${contactData.phone}`,
       address: contactData.address,
       travelers: travelerDetails,
       paymentMethod,
-      paymentProof
+      paymentProof,
+      // Store PNR/Order info if available
+      notes: pnr ? `PNR GDS: ${pnr}` : undefined,
+      agencyId: user?.id,
+      agencyName: user?.role === 'AGENT' ? user.agencyName : undefined
     };
 
     onSuccess(newBooking);
+    setIsProcessing(false);
   };
 
   return (
-    <div className="bg-white rounded-[40px] shadow-2xl border border-gray-100 overflow-hidden max-w-4xl mx-auto animate-in fade-in zoom-in-95 duration-500">
+    <div className="bg-white md:rounded-[40px] shadow-2xl border border-gray-100 overflow-hidden max-w-4xl mx-auto animate-in fade-in zoom-in-95 duration-500 min-h-screen md:min-h-auto">
       {/* Dynamic Header */}
-      <div className="bg-blue-900 p-8 text-white flex flex-col md:flex-row items-center justify-between border-b border-white/10 sticky top-0 z-50 shadow-md">
-        <div className="flex items-center space-x-6">
-          <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center">
-            <Plane size={24} className="text-orange-500" />
+      <div className="bg-blue-900 p-6 md:p-8 text-white flex flex-col md:flex-row items-center justify-between border-b border-white/10 sticky top-0 z-[60] shadow-md gap-4">
+        <div className="flex items-center space-x-4 md:space-x-6 w-full md:w-auto">
+          <div className="w-12 h-12 md:w-14 md:h-14 bg-white/10 rounded-2xl flex items-center justify-center shrink-0">
+            <Plane size={20} className="text-orange-500" />
           </div>
-          <div>
-            <p className="text-[10px] font-black text-blue-300 uppercase tracking-widest mb-1">Dossier de Réservation</p>
-            <h3 className="text-xl font-black tracking-tight">{packageName || initialService}</h3>
-            <p className="text-[10px] font-bold text-orange-400 uppercase mt-1">
-              {totalTravelersCount} Voyageur(s) sélectionné(s)
+          <div className="flex-1">
+            <p className="text-[9px] md:text-[10px] font-black text-blue-300 uppercase tracking-widest mb-0.5 md:mb-1">Dossier de Réservation</p>
+            <h3 className="text-lg md:text-xl font-black tracking-tight line-clamp-1">{packageName || initialService}</h3>
+            <p className="text-[9px] md:text-[10px] font-bold text-orange-400 uppercase mt-0.5 md:mt-1">
+              {totalTravelersCount} Voyageur(s)
             </p>
           </div>
         </div>
@@ -197,18 +251,18 @@ const BookingForm: React.FC<BookingFormProps> = ({
       </div>
 
       {/* Progress Steps */}
-      <div className="bg-gray-50 p-8 border-b border-gray-100">
-        <div className="flex justify-between items-center mb-6 max-w-lg mx-auto">
+      <div className="bg-gray-50 p-6 md:p-8 border-b border-gray-100">
+        <div className="flex justify-between items-center mb-4 md:mb-6 max-w-lg mx-auto">
           {[1, 2, 3, 4].map((s) => (
             <div key={s} className="flex items-center">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-xs transition-all shadow-sm ${step >= s ? 'bg-blue-900 text-white' : 'bg-gray-200 text-gray-500'}`}>
+              <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-black text-[10px] md:text-xs transition-all shadow-sm ${step >= s ? 'bg-blue-900 text-white' : 'bg-gray-200 text-gray-500'}`}>
                 {s}
               </div>
-              {s < 4 && <div className={`w-12 md:w-20 h-1 mx-2 rounded-full ${step > s ? 'bg-blue-900' : 'bg-gray-200'}`}></div>}
+              {s < 4 && <div className={`w-8 md:w-20 h-0.5 md:h-1 mx-1 md:mx-2 rounded-full ${step > s ? 'bg-blue-900' : 'bg-gray-200'}`}></div>}
             </div>
           ))}
         </div>
-        <div className="flex justify-between text-[8px] font-black text-gray-400 uppercase tracking-[0.2em] max-w-lg mx-auto text-center px-2">
+        <div className="flex justify-between text-[7px] md:text-[8px] font-black text-gray-400 uppercase tracking-[0.1em] md:tracking-[0.2em] max-w-lg mx-auto text-center px-1 md:px-2">
           <span>{initialService === 'BILLETERIE' ? 'Vérifié' : 'Passagers'}</span>
           <span>Identités</span>
           <span>Paiement</span>
@@ -239,28 +293,23 @@ const BookingForm: React.FC<BookingFormProps> = ({
               <p className="text-gray-400 text-sm font-medium">Vérifiez la composition du voyage avant de continuer</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
               {[
                 { type: 'adults', label: 'Adulte', icon: Users, count: travelerCounts.adults, price: actualPriceAdult },
-                { type: 'children', label: 'Enfant', icon: User, count: travelerCounts.children, price: actualPriceChild },
-                { type: 'babies', label: 'Bébé', icon: User, count: travelerCounts.babies, price: actualPriceBaby }
+                { type: 'children', label: 'Enfant', icon: UserIcon, count: travelerCounts.children, price: actualPriceChild },
+                { type: 'babies', label: 'Bébé', icon: UserIcon, count: travelerCounts.babies, price: actualPriceBaby }
               ].map((cat) => (
-                <div key={cat.type} className={`bg-white p-8 rounded-[32px] border flex flex-col items-center space-y-4 shadow-sm transition-all ${cat.count > 0 ? 'border-orange-200 ring-4 ring-orange-500/5' : 'border-gray-100'}`}>
-                  <div className={`p-4 rounded-2xl ${cat.count > 0 ? 'bg-orange-50 text-orange-600' : 'bg-gray-50 text-gray-400'}`}><cat.icon size={24} /></div>
+                <div key={cat.type} className={`bg-white p-6 md:p-8 rounded-[32px] border flex flex-col items-center space-y-4 shadow-sm transition-all ${cat.count > 0 ? 'border-orange-200 ring-4 ring-orange-500/5' : 'border-gray-100'}`}>
+                  <div className={`p-4 rounded-2xl ${cat.count > 0 ? 'bg-orange-50 text-orange-600' : 'bg-gray-50 text-gray-400'}`}><cat.icon size={20} /></div>
                   <div className="text-center">
-                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">{cat.label}</span>
+                    <span className="text-[9px] md:text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">{cat.label}</span>
                     <span className="text-xs font-black text-blue-900 block">{Math.round(cat.price).toLocaleString()} DA</span>
                   </div>
                   <div className="flex items-center space-x-6">
-                    <button type="button" onClick={() => setTravelerCounts(prev => ({ ...prev, [cat.type]: Math.max(cat.type === 'adults' ? 1 : 0, prev[cat.type as keyof typeof travelerCounts] - 1) }))} className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-blue-900 hover:bg-red-50 transition-colors"><Minus size={18} /></button>
-                    <span className="text-2xl font-black text-blue-900 w-6 text-center">{cat.count}</span>
-                    <button type="button" onClick={() => setTravelerCounts(prev => ({ ...prev, [cat.type]: prev[cat.type as keyof typeof travelerCounts] + 1 }))} className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-blue-900 hover:bg-blue-900 hover:text-white transition-colors"><Plus size={18} /></button>
+                    <button type="button" onClick={() => setTravelerCounts(prev => ({ ...prev, [cat.type]: Math.max(cat.type === 'adults' ? 1 : 0, prev[cat.type as keyof typeof travelerCounts] - 1) }))} className="w-9 h-9 md:w-10 md:h-10 rounded-xl bg-gray-50 flex items-center justify-center text-blue-900 hover:bg-red-50 transition-colors"><Minus size={16} /></button>
+                    <span className="text-xl md:text-2xl font-black text-blue-900 w-6 text-center">{cat.count}</span>
+                    <button type="button" onClick={() => setTravelerCounts(prev => ({ ...prev, [cat.type]: prev[cat.type as keyof typeof travelerCounts] + 1 }))} className="w-9 h-9 md:w-10 md:h-10 rounded-xl bg-gray-50 flex items-center justify-center text-blue-900 hover:bg-blue-900 hover:text-white transition-colors"><Plus size={16} /></button>
                   </div>
-                  {cat.count > 0 && (
-                    <div className="text-[9px] font-black text-green-600 uppercase tracking-widest bg-green-50 px-3 py-1 rounded-full">
-                      Sous-total: {(cat.count * cat.price).toLocaleString()} DA
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
@@ -316,27 +365,36 @@ const BookingForm: React.FC<BookingFormProps> = ({
               <p className="text-gray-400 text-sm font-medium">Sélectionnez votre méthode de règlement sécurisée</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <button type="button" onClick={() => setPaymentMethod('CIB_EDAHABIA')} className={`p-6 rounded-[32px] border-2 text-left transition-all relative overflow-hidden group ${paymentMethod === 'CIB_EDAHABIA' ? 'border-blue-900 bg-blue-50/50' : 'border-gray-100 hover:border-blue-200'}`}>
-                <CreditCard className={`mb-4 ${paymentMethod === 'CIB_EDAHABIA' ? 'text-blue-900' : 'text-gray-400'}`} size={32} />
-                <h4 className="font-black text-blue-900 text-sm">CIB / EDAHABIA</h4>
-                <p className="text-[9px] text-gray-500 font-medium mt-1 uppercase tracking-tighter">Paiement Instantané</p>
-                {paymentMethod === 'CIB_EDAHABIA' && <CheckCircle2 className="absolute top-4 right-4 text-blue-900" size={18} />}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
+              <button type="button" onClick={() => setPaymentMethod('CIB_EDAHABIA')} className={`p-6 rounded-[24px] md:rounded-[32px] border-2 text-left transition-all relative overflow-hidden group ${paymentMethod === 'CIB_EDAHABIA' ? 'border-blue-900 bg-blue-50/50' : 'border-gray-100 hover:border-blue-200'}`}>
+                <CreditCard className={`mb-3 md:mb-4 ${paymentMethod === 'CIB_EDAHABIA' ? 'text-blue-900' : 'text-gray-400'}`} size={28} />
+                <h4 className="font-black text-blue-900 text-xs md:text-sm uppercase tracking-tighter">CIB / EDAHABIA</h4>
+                <p className="text-[8px] text-gray-400 font-medium mt-1 uppercase tracking-widest">Instant Libéré</p>
+                {paymentMethod === 'CIB_EDAHABIA' && <CheckCircle2 className="absolute top-4 right-4 text-blue-900" size={16} />}
               </button>
 
-              <button type="button" onClick={() => setPaymentMethod('BARIDIMOB_CCP')} className={`p-6 rounded-[32px] border-2 text-left transition-all relative overflow-hidden group ${paymentMethod === 'BARIDIMOB_CCP' ? 'border-orange-500 bg-orange-50/50' : 'border-gray-100 hover:border-orange-200'}`}>
-                <Landmark className={`mb-4 ${paymentMethod === 'BARIDIMOB_CCP' ? 'text-orange-500' : 'text-gray-400'}`} size={32} />
-                <h4 className="font-black text-blue-900 text-sm">BARIDIMOB / CCP</h4>
-                <p className="text-[9px] text-gray-500 font-medium mt-1 uppercase tracking-tighter">Transfert RIP</p>
-                {paymentMethod === 'BARIDIMOB_CCP' && <CheckCircle2 className="absolute top-4 right-4 text-orange-500" size={18} />}
+              <button type="button" onClick={() => setPaymentMethod('BARIDIMOB_CCP')} className={`p-6 rounded-[24px] md:rounded-[32px] border-2 text-left transition-all relative overflow-hidden group ${paymentMethod === 'BARIDIMOB_CCP' ? 'border-orange-500 bg-orange-50/50' : 'border-gray-100 hover:border-orange-200'}`}>
+                <Landmark className={`mb-3 md:mb-4 ${paymentMethod === 'BARIDIMOB_CCP' ? 'text-orange-500' : 'text-gray-400'}`} size={28} />
+                <h4 className="font-black text-blue-900 text-xs md:text-sm uppercase tracking-tighter">BARIDIMOB / CCP</h4>
+                <p className="text-[8px] text-gray-400 font-medium mt-1 uppercase tracking-widest">Transfert RIP</p>
+                {paymentMethod === 'BARIDIMOB_CCP' && <CheckCircle2 className="absolute top-4 right-4 text-orange-500" size={16} />}
               </button>
 
-              <button type="button" onClick={() => setPaymentMethod('CASH_AGENCY')} className={`p-6 rounded-[32px] border-2 text-left transition-all relative overflow-hidden group ${paymentMethod === 'CASH_AGENCY' ? 'border-green-600 bg-green-50/50' : 'border-gray-100 hover:border-green-200'}`}>
-                <Wallet className={`mb-4 ${paymentMethod === 'CASH_AGENCY' ? 'text-green-600' : 'text-gray-400'}`} size={32} />
-                <h4 className="font-black text-blue-900 text-sm">EN AGENCE</h4>
-                <p className="text-[9px] text-gray-500 font-medium mt-1 uppercase tracking-tighter">Paiement sur place</p>
-                {paymentMethod === 'CASH_AGENCY' && <CheckCircle2 className="absolute top-4 right-4 text-green-600" size={18} />}
+              <button type="button" onClick={() => setPaymentMethod('CASH_AGENCY')} className={`p-6 rounded-[24px] md:rounded-[32px] border-2 text-left transition-all relative overflow-hidden group ${paymentMethod === 'CASH_AGENCY' ? 'border-green-600 bg-green-50/50' : 'border-gray-100 hover:border-green-200'}`}>
+                <Wallet className={`mb-3 md:mb-4 ${paymentMethod === 'CASH_AGENCY' ? 'text-green-600' : 'text-gray-400'}`} size={28} />
+                <h4 className="font-black text-blue-900 text-xs md:text-sm uppercase tracking-tighter">EN AGENCE</h4>
+                <p className="text-[8px] text-gray-400 font-medium mt-1 uppercase tracking-widest">Post-Paiement Cash</p>
+                {paymentMethod === 'CASH_AGENCY' && <CheckCircle2 className="absolute top-4 right-4 text-green-600" size={16} />}
               </button>
+
+              {user && user.role === 'AGENT' && (
+                <button type="button" onClick={() => setPaymentMethod('WALLET')} className={`p-6 rounded-[24px] md:rounded-[32px] border-2 text-left transition-all relative overflow-hidden group col-span-1 sm:col-span-3 lg:col-span-1 ${paymentMethod === 'WALLET' ? 'border-purple-600 bg-purple-50/50' : 'border-gray-100 hover:border-purple-200'}`}>
+                  <Wallet className={`mb-3 md:mb-4 ${paymentMethod === 'WALLET' ? 'text-purple-600' : 'text-gray-400'}`} size={28} />
+                  <h4 className="font-black text-blue-900 text-xs md:text-sm uppercase tracking-tighter">SOLDE WALLET</h4>
+                  <p className="text-[10px] text-purple-600 font-black mt-1 uppercase tracking-widest">Dispo: {user.walletBalance?.toLocaleString()} DA</p>
+                  {paymentMethod === 'WALLET' && <CheckCircle2 className="absolute top-4 right-4 text-purple-600" size={16} />}
+                </button>
+              )}
             </div>
 
             {/* CIB / EDAHABIA Card Interface */}
@@ -446,7 +504,13 @@ const BookingForm: React.FC<BookingFormProps> = ({
 
             <div className="flex gap-4">
               <button type="button" onClick={() => setStep(2)} className="flex-1 bg-gray-100 text-gray-400 font-black py-5 rounded-2xl uppercase tracking-widest text-[10px] transition-all hover:bg-gray-200">Précédent</button>
-              <button type="button" onClick={() => setStep(4)} className={`flex-[2] font-black py-5 rounded-2xl uppercase tracking-widest text-[10px] shadow-xl transition-all ${paymentMethod === 'CIB_EDAHABIA' ? 'bg-blue-900 text-white shadow-blue-900/20' : paymentMethod === 'BARIDIMOB_CCP' ? 'bg-orange-500 text-white shadow-orange-500/20' : 'bg-green-600 text-white shadow-green-600/20'}`}>Récapitulatif Final</button>
+              <button type="button" onClick={() => {
+                if (paymentMethod === 'WALLET' && user && user.walletBalance < totalPrice) {
+                  alert(`Solde insuffisant: Votre solde est de ${user.walletBalance.toLocaleString()} DA, mais le total est de ${totalPrice.toLocaleString()} DA.`);
+                  return;
+                }
+                setStep(4);
+              }} className={`flex-[2] font-black py-5 rounded-2xl uppercase tracking-widest text-[10px] shadow-xl transition-all ${paymentMethod === 'CIB_EDAHABIA' ? 'bg-blue-900 text-white shadow-blue-900/20' : paymentMethod === 'BARIDIMOB_CCP' ? 'bg-orange-500 text-white shadow-orange-500/20' : paymentMethod === 'WALLET' ? 'bg-purple-600 text-white shadow-purple-600/20' : 'bg-green-600 text-white shadow-green-600/20'}`}>Récapitulatif Final</button>
             </div>
           </div>
         )}
@@ -490,19 +554,64 @@ const BookingForm: React.FC<BookingFormProps> = ({
                 ))}
               </div>
 
+              <div className="p-8 bg-blue-50/30 space-y-4 rounded-3xl mx-8 mb-4 border border-blue-100/50">
+                <div className="flex justify-between items-center text-[10px] font-black text-blue-900/40 uppercase tracking-[0.2em]">
+                  <span>Résumé de la transaction</span>
+                  <div className="flex items-center space-x-2">
+                    <ShieldCheck size={12} className="text-blue-600" />
+                    <span>Sécurisé</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-blue-900/60 font-bold leading-relaxed px-2">
+                  Le montant total affiché est définitif et comprend toutes les taxes aériennes ainsi que les frais de service de l'agence Cheap Travel. Aucun frais supplémentaire ne sera appliqué.
+                </p>
+              </div>
+
               <div className="p-10 bg-gray-50 border-t border-gray-100 flex flex-col md:flex-row justify-between items-center gap-6">
                 <div>
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">Montant Total de la Commande</span>
                   <span className="text-4xl font-black text-orange-500">{totalPrice.toLocaleString()} DA</span>
                 </div>
-                <button type="submit" className="bg-blue-900 text-white font-black px-12 py-6 rounded-[32px] hover:bg-black transition-all shadow-2xl shadow-blue-900/30 flex items-center space-x-4 group uppercase tracking-[0.4em] text-[10px] w-full md:w-auto">
-                  <CheckCircle2 size={24} className="group-hover:scale-110 transition-transform" />
-                  <span>Confirmer la Réservation</span>
+                <button
+                  disabled={isProcessing}
+                  type="submit"
+                  className="bg-blue-900 text-white font-black px-12 py-6 rounded-[32px] hover:bg-black transition-all shadow-2xl shadow-blue-900/30 flex items-center justify-center space-x-4 group uppercase tracking-[0.4em] text-[10px] w-full md:w-auto min-w-[300px]"
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2 size={24} className="animate-spin" />
+                      <span>Émission du Billet...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={24} className="group-hover:scale-110 transition-transform" />
+                      <span>{initialService === 'BILLETERIE' ? 'Acheter Réellement' : 'Confirmer la Réservation'}</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
 
             <button type="button" onClick={() => setStep(3)} className="w-full text-[10px] font-black text-gray-400 uppercase tracking-widest hover:text-blue-900 transition-colors">Modifier le mode de paiement</button>
+
+            {gdsResult && (
+              <div className="mt-8 bg-green-900 text-white p-8 rounded-[32px] border border-green-500 shadow-2xl animate-in zoom-in duration-500">
+                <div className="flex items-center space-x-4 mb-4">
+                  <div className="p-3 bg-white/10 rounded-xl"><Sparkles className="text-orange-400" /></div>
+                  <h4 className="text-lg font-black uppercase tracking-tighter">Billet Émis Réellement</h4>
+                </div>
+                <div className="flex justify-between items-center bg-black/30 p-6 rounded-2xl border border-white/10">
+                  <div>
+                    <p className="text-[10px] font-bold text-green-400 uppercase tracking-widest">Référence PNR Amadeus</p>
+                    <p className="text-3xl font-black tracking-[0.2em]">{gdsResult.id}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase">Statut Compagnie</p>
+                    <p className="text-xs font-black text-orange-400">RÉSERVÉ / OK</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </form>

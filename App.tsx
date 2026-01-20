@@ -14,8 +14,9 @@ import AIChat from './components/AIChat';
 import FomoNotification from './components/FomoNotification';
 import Voucher from './components/Voucher';
 import PackageDetails from './components/PackageDetails';
+import ResetPassword from './components/ResetPassword';
 import Footer from './components/Footer';
-import { AppSpace, ServiceType, User, Booking, TravelPackage } from './types';
+import { AppSpace, ServiceType, User, Booking, TravelPackage, AppNotification } from './types';
 import { dbService } from './services/dbService';
 import { authService } from './services/authService';
 import { MOCK_PACKAGES, SERVICES_LIST, WHATSAPP_LINK, formatWhatsAppMessage } from './constants';
@@ -25,7 +26,7 @@ import {
   Sparkles, Edit, Trash2, Plus, ShieldAlert, LogOut, MessageSquare, Flame, Briefcase
 } from 'lucide-react';
 
-type PageID = 'home' | 'billeterie' | 'visa' | 'omrah' | 'organised' | 'booking' | 'profile' | 'admin';
+type PageID = 'home' | 'billeterie' | 'visa' | 'omrah' | 'organised' | 'booking' | 'profile' | 'admin' | 'reset-password';
 
 const App: React.FC = () => {
   const [currentSpace, setCurrentSpace] = useState<AppSpace>(AppSpace.CLIENT);
@@ -35,12 +36,17 @@ const App: React.FC = () => {
   const [viewingPackage, setViewingPackage] = useState<TravelPackage | undefined>();
   const [basePrice, setBasePrice] = useState<number>(0);
   const [initialAdults, setInitialAdults] = useState<number>(1);
+  const [initialChildren, setInitialChildren] = useState<number>(0);
+  const [initialInfants, setInitialInfants] = useState<number>(0);
+  const [flightSearchParams, setFlightSearchParams] = useState<{ from: string, to: string } | undefined>();
+  const [activeFlightOffer, setActiveFlightOffer] = useState<any | undefined>();
 
   // DATA STATES
   const [packages, setPackages] = useState<TravelPackage[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [dbStatus, setDbStatus] = useState(dbService.getDbStatus());
+  const [resendApiKey, setResendApiKey] = useState<string>(localStorage.getItem('ct_resend_api_key') || '');
 
   const [showAuth, setShowAuth] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -52,10 +58,23 @@ const App: React.FC = () => {
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
 
-  const [notification, setNotification] = useState<{ title: string, message: string } | null>(null);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
-  const triggerNotification = (message: string) => {
-    setNotification({ title: "Notification Système", message });
+  const triggerNotification = (type: AppNotification['type'], title: string, message: string, link?: string) => {
+    const newNote: AppNotification = {
+      id: Math.random().toString(36).substr(2, 9),
+      type,
+      title,
+      message,
+      isRead: false,
+      createdAt: new Date().toISOString(),
+      link
+    };
+    setNotifications(prev => [newNote, ...prev]);
+  };
+
+  const markNotificationAsRead = (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
   };
 
   useEffect(() => {
@@ -96,6 +115,17 @@ const App: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    // Check for Deep Link / Password Reset Link
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode');
+    if (mode === 'reset_password') {
+      setActivePage('reset-password');
+      // Clean up URL to avoid re-triggering
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   const handleLogout = () => {
     authService.clearSession();
     setUser(null);
@@ -108,6 +138,7 @@ const App: React.FC = () => {
   const handleAuthSuccess = (userData: User) => {
     setUser(userData);
     setShowAuth(false);
+    localStorage.setItem('ct_user', JSON.stringify(userData));
     if (userData.role === 'ADMIN') {
       setCurrentSpace(AppSpace.ADMIN);
       setActivePage('admin');
@@ -117,9 +148,19 @@ const App: React.FC = () => {
     }
   };
 
+  const refreshUserProfile = async () => {
+    if (!user) return;
+    const profile = await dbService.getProfile(user.id);
+    if (profile) {
+      setUser(profile);
+      localStorage.setItem('ct_user', JSON.stringify(profile));
+    }
+  };
+
   const startBooking = (service: ServiceType, pkg?: TravelPackage) => {
     setSelectedService(service);
     setSelectedPackage(pkg);
+    setActiveFlightOffer(undefined);
     setViewingPackage(undefined);
     setBasePrice(pkg ? pkg.price : 0);
     setInitialAdults(1);
@@ -127,20 +168,23 @@ const App: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleFlightSelect = (offer: any, finalPrice: number, airlineName: string, adultsCount: number = 1) => {
+  const handleFlightSelect = (offer: any, finalPrice: number, airlineName: string, adultsCount: number = 1, priceDetails?: any) => {
     setSelectedService('BILLETERIE');
+    setActiveFlightOffer(offer);
     setSelectedPackage({
       id: offer.id,
       title: `Vol ${airlineName}`,
       description: `Réservation de billet d'avion émise par Cheap Travel.`,
       price: finalPrice,
-      priceAdult: finalPrice / adultsCount,
+      priceAdult: finalPrice / (priceDetails?.pax ? (priceDetails.pax.adults + priceDetails.pax.children + priceDetails.pax.infants) : adultsCount),
       type: 'BILLETERIE',
       stock: 999,
       image: 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=2074&auto=format&fit=crop'
     } as any);
     setBasePrice(finalPrice);
-    setInitialAdults(adultsCount);
+    setInitialAdults(priceDetails?.pax?.adults || adultsCount);
+    setInitialChildren(priceDetails?.pax?.children || 0);
+    setInitialInfants(priceDetails?.pax?.infants || 0);
     setActivePage('booking');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -164,6 +208,24 @@ const App: React.FC = () => {
   const addPackage = async (pkg: TravelPackage) => {
     const updated = await dbService.savePackage(pkg);
     setPackages(updated);
+
+    // Auto Broadcast if API Key is set
+    if (resendApiKey) {
+      const subscribers = await dbService.getSubscribers();
+      const customerEmails = bookings
+        .filter(b => b.contact && b.contact.includes('@'))
+        .map(b => b.contact!.toLowerCase().split('|').find(p => p.includes('@'))?.trim() || '')
+        .filter(e => e !== '');
+
+      const allEmails = Array.from(new Set([...subscribers.map(s => s.email), ...customerEmails]));
+
+      if (allEmails.length > 0) {
+        import('./services/notificationService').then(({ notificationService }) => {
+          notificationService.sendViaAPI(pkg, allEmails, resendApiKey);
+          triggerNotification('SYSTEM', 'Marketing Auto', `Nouvelle offre diffusée à ${allEmails.length} contacts.`);
+        });
+      }
+    }
   };
 
   const updatePackage = async (updatedPkg: TravelPackage) => {
@@ -191,9 +253,10 @@ const App: React.FC = () => {
     const freshPackages = await dbService.getPackages();
     setPackages(freshPackages);
 
-    if (finalBooking.agencyId && user && user.role === 'AGENT') {
+    if (finalBooking.agencyId && user && user.role === 'AGENT' && finalBooking.paymentMethod === 'WALLET') {
       const newBalance = user.walletBalance - (finalBooking.amount || 0);
       const updatedUser = { ...user, walletBalance: newBalance };
+      await dbService.updateProfile(updatedUser); // Persist to Supabase
       setUser(updatedUser);
       localStorage.setItem('ct_user', JSON.stringify(updatedUser));
     }
@@ -208,6 +271,24 @@ const App: React.FC = () => {
 
   const deleteBooking = async (id: string) => {
     const updated = await dbService.deleteBooking(id);
+    setBookings(updated);
+  };
+
+  const deleteSubscriber = async (id: string) => {
+    await dbService.deleteSubscriber(id);
+    triggerNotification('SYSTEM', 'Abonné supprimé', "Le contact a été retiré de la base de données.");
+  };
+
+  const deleteAgent = async (id: string) => {
+    await dbService.deleteProfile(id);
+    triggerNotification('AGENCY', 'Agent supprimé', "Le compte agent a été retiré de la base de données.");
+  };
+
+  const handleImportBookings = async (newBookings: Booking[]) => {
+    let updated = bookings;
+    for (const b of newBookings) {
+      updated = await dbService.saveBooking(b);
+    }
     setBookings(updated);
   };
 
@@ -240,8 +321,9 @@ const App: React.FC = () => {
   const renderCurrentView = () => {
     if (currentSpace === AppSpace.ADMIN && user?.role === 'ADMIN') {
       return (
-        <div className="py-12 px-4 max-w-7xl mx-auto print:hidden">
+        <div className="w-full min-h-screen bg-[#0a0c10] print:hidden">
           <AdminPanel
+            user={user}
             bookings={bookings}
             packages={packages}
             onUpdateBooking={updateBookingStatus}
@@ -249,10 +331,20 @@ const App: React.FC = () => {
             onAddPackage={addPackage}
             onUpdatePackage={updatePackage}
             onDeletePackage={deletePackage}
+            onDeleteSubscriber={deleteSubscriber}
+            onDeleteAgent={deleteAgent}
             onResetSystem={resetData}
             dbStatus={dbStatus}
             onViewVoucher={setSelectedVoucher}
             onNotify={triggerNotification}
+            notifications={notifications}
+            onMarkRead={markNotificationAsRead}
+            onImportBookings={handleImportBookings}
+            resendApiKey={resendApiKey}
+            onUpdateResendKey={(key) => {
+              setResendApiKey(key);
+              localStorage.setItem('ct_resend_api_key', key);
+            }}
           />
         </div>
       );
@@ -260,7 +352,7 @@ const App: React.FC = () => {
 
     if (currentSpace === AppSpace.AGENCY) {
       if (activePage === 'billeterie') {
-        return <div className="py-24 max-w-7xl mx-auto px-4"><BilleterieSearch isB2B={true} onFlightSelected={(offer, price, airline, adults) => handleFlightSelect(offer, price, airline, adults)} /></div>;
+        return <div className="py-24 max-w-7xl mx-auto px-4"><BilleterieSearch isB2B={true} initialParams={flightSearchParams} onFlightSelected={(offer, price, airline, adults) => handleFlightSelect(offer, price, airline, adults)} /></div>;
       }
       return (
         <div className="py-12 px-4 max-w-7xl mx-auto print:hidden">
@@ -273,6 +365,12 @@ const App: React.FC = () => {
             onNewB2BBooking={handleBookingSuccess}
             onViewVoucher={setSelectedVoucher}
             onNavigateBilleterie={() => setActivePage('billeterie')}
+            onRefreshUser={refreshUserProfile}
+            onSpaceChange={(s) => setCurrentSpace(s as AppSpace)}
+            onNotify={triggerNotification}
+            notifications={notifications}
+            onMarkRead={markNotificationAsRead}
+            resendApiKey={resendApiKey}
           />
         </div>
       );
@@ -282,39 +380,42 @@ const App: React.FC = () => {
       case 'home':
         return (
           <>
-            <Hero onNavigate={setActivePage} />
+            <Hero onNavigate={(page, params) => {
+              if (params) setFlightSearchParams(params);
+              setActivePage(page);
+            }} />
             <Services />
 
             <section className="py-32 bg-white">
               <div className="max-w-7xl mx-auto px-4">
-                <div className="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-8">
-                  <div>
-                    <span className="text-orange-500 text-[10px] font-black uppercase tracking-[0.4em] mb-4 block">Destinations Phares</span>
-                    <h2 className="text-5xl font-black text-blue-900 tracking-tighter">Offres <span className="text-gray-300">Exclusives</span></h2>
+                <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 md:mb-16 gap-6">
+                  <div className="text-center md:text-left">
+                    <span className="text-orange-500 text-[9px] md:text-[10px] font-black uppercase tracking-[0.4em] mb-3 md:mb-4 block">Destinations Phares</span>
+                    <h2 className="text-4xl md:text-5xl font-black text-blue-900 tracking-tighter">Offres <span className="text-gray-300">Exclusives</span></h2>
                   </div>
-                  <button onClick={() => setActivePage('organised')} className="flex items-center space-x-3 text-[10px] font-black uppercase tracking-widest text-blue-900 group">
+                  <button onClick={() => setActivePage('organised')} className="flex items-center justify-center space-x-3 text-[10px] font-black uppercase tracking-widest text-blue-900 group">
                     <span>Voir Tout le Catalogue</span>
                     <ArrowRight size={18} className="group-hover:translate-x-2 transition-transform" />
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
                   {packages.map((pkg) => (
-                    <div key={pkg.id} className="group relative rounded-[40px] overflow-hidden aspect-[4/5] shadow-2xl cursor-pointer" onClick={() => setViewingPackage(pkg)}>
+                    <div key={pkg.id} className="group relative rounded-[32px] md:rounded-[40px] overflow-hidden aspect-[4/5] shadow-2xl cursor-pointer" onClick={() => setViewingPackage(pkg)}>
                       <img src={pkg.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-[2s]" />
                       <div className="absolute inset-0 bg-gradient-to-t from-blue-900/90 via-transparent to-transparent"></div>
-                      <div className={`absolute top-8 left-8 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest backdrop-blur-md border flex items-center space-x-2 ${pkg.stock <= 5 ? 'bg-red-500 text-white border-red-400' : 'bg-green-500/20 text-green-500 border-green-500/30'}`}>
+                      <div className={`absolute top-6 left-6 md:top-8 md:left-8 px-4 py-2 rounded-2xl text-[9px] md:text-[10px] font-black uppercase tracking-widest backdrop-blur-md border flex items-center space-x-2 ${pkg.stock <= 5 ? 'bg-red-500 text-white border-red-400' : 'bg-green-500/20 text-green-500 border-green-500/30'}`}>
                         {pkg.stock <= 5 && <Flame size={12} className="animate-pulse" />}
                         <span>{pkg.stock > 0 ? `${pkg.stock} places dispos` : 'Complet'}</span>
                       </div>
-                      <div className="absolute bottom-8 left-8 right-8 text-white">
-                        <span className="bg-orange-500 text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest mb-3 inline-block">{pkg.type.replace('_', ' ')}</span>
-                        <h3 className="text-2xl font-black mb-1 group-hover:text-orange-500 transition-colors">{pkg.title}</h3>
-                        <div className="flex items-center justify-between mt-4">
-                          <p className="text-blue-100/60 text-xs font-bold">{(pkg.priceAdult || pkg.price).toLocaleString()} DA</p>
+                      <div className="absolute bottom-6 left-6 right-6 md:bottom-8 md:left-8 md:right-8 text-white">
+                        <span className="bg-orange-500 text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest mb-2 md:mb-3 inline-block">{pkg.type.replace('_', ' ')}</span>
+                        <h2 className="text-xl md:text-2xl font-black mb-1 group-hover:text-orange-500 transition-colors">{pkg.title}</h2>
+                        <div className="flex items-center justify-between mt-3 md:mt-4">
+                          <p className="text-blue-100/60 text-[10px] md:text-xs font-bold">{(pkg.priceAdult || pkg.price).toLocaleString()} DA</p>
                           <div className="flex items-center space-x-1">
                             <Star size={10} className="fill-orange-500 text-orange-500" />
-                            <span className="text-[10px] font-black uppercase tracking-widest">4.9/5</span>
+                            <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest">4.9/5</span>
                           </div>
                         </div>
                       </div>
@@ -344,7 +445,7 @@ const App: React.FC = () => {
           </>
         );
       case 'billeterie':
-        return <div className="py-24 max-w-7xl mx-auto px-4"><BilleterieSearch isB2B={false} onFlightSelected={(offer, price, airline, adults) => handleFlightSelect(offer, price, airline, adults)} /></div>;
+        return <div className="py-24 max-w-7xl mx-auto px-4"><BilleterieSearch isB2B={false} initialParams={flightSearchParams} onFlightSelected={(offer, price, airline, adults) => handleFlightSelect(offer, price, airline, adults)} /></div>;
       case 'visa':
         return <div className="py-24 max-w-7xl mx-auto px-4"><div className="grid grid-cols-1 md:grid-cols-2 gap-20 items-center"><div><h2 className="text-7xl font-black text-blue-900 tracking-tighter mb-8 leading-none">Solutions <br /><span className="text-orange-500">Visa Pro</span></h2><p className="text-gray-500 text-xl font-medium leading-relaxed mb-12">Expertise complète pour l'obtention de vos visas.</p><div className="flex gap-4"><button onClick={() => startBooking('VISA')} className="bg-blue-900 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-widest text-[10px] shadow-2xl">Visa Classique</button><button onClick={() => startBooking('E-VISA')} className="bg-orange-500 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-widest text-[10px] shadow-2xl">E-Visa Rapide</button></div></div><div className="bg-blue-900 rounded-[80px] aspect-square relative overflow-hidden flex items-center justify-center p-20"><Globe className="text-white/10 w-full h-full absolute animate-spin-slow" /><ShieldCheck size={200} className="text-white relative z-10" /></div></div></div>;
       case 'omrah':
@@ -360,14 +461,14 @@ const App: React.FC = () => {
           ))}
         </div></div>;
       case 'booking':
-        return <div className="py-24 px-4"><BookingForm initialService={selectedService} packageName={selectedPackage?.title} packageId={selectedPackage?.id} initialBasePrice={basePrice} priceAdult={selectedPackage?.priceAdult} priceChild={selectedPackage?.priceChild} priceBaby={selectedPackage?.priceBaby} availableStock={selectedPackage?.stock} onSuccess={handleBookingSuccess} initialAdults={initialAdults} /></div>;
+        return <div className="py-24 px-4"><BookingForm user={user} initialService={selectedService} flightOffer={activeFlightOffer} packageName={selectedPackage?.title} packageId={selectedPackage?.id} initialBasePrice={basePrice} priceAdult={selectedPackage?.priceAdult} priceChild={selectedPackage?.priceChild} priceBaby={selectedPackage?.priceBaby} availableStock={selectedPackage?.stock} onSuccess={handleBookingSuccess} initialAdults={initialAdults} initialChildren={initialChildren} initialInfants={initialInfants} /></div>;
+      case 'reset-password':
+        return <ResetPassword onSuccess={() => { setActivePage('home'); setShowAuth(true); }} onBack={() => setActivePage('home')} />;
       case 'profile':
-        return <div className="py-12 px-4"><ClientSpace /></div>;
+        return <div className="py-12 px-4"><ClientSpace onNavigate={setActivePage} /></div>;
       case 'admin':
-        if (user?.role === 'ADMIN') {
-          setCurrentSpace(AppSpace.ADMIN);
-          return renderCurrentView();
-        }
+        // Fallback: If page is admin but space isn't, we show nothing or redirect
+        // However, the space check in renderCurrentView start should catch this.
         return null;
       default:
         return <Hero onNavigate={setActivePage} />;
@@ -376,7 +477,25 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-inter relative">
-      <Navbar currentSpace={currentSpace} onSpaceChange={(s) => { if (s === AppSpace.ADMIN && user?.role !== 'ADMIN') { setCurrentSpace(AppSpace.AGENCY); setActivePage('home'); } else { setCurrentSpace(s); } }} currentPage={activePage} onPageChange={setActivePage} user={user} onAuthClick={() => setShowAuth(true)} onLogout={handleLogout} />
+      <Navbar
+        currentSpace={currentSpace}
+        onSpaceChange={(s) => {
+          if (s === AppSpace.ADMIN && user?.role !== 'ADMIN') {
+            setCurrentSpace(AppSpace.AGENCY);
+            setActivePage('home');
+          } else {
+            setCurrentSpace(s);
+            // Default page for each space
+            if (s === AppSpace.ADMIN) setActivePage('admin');
+            if (s === AppSpace.AGENCY) setActivePage('home');
+          }
+        }}
+        currentPage={activePage}
+        onPageChange={setActivePage}
+        user={user}
+        onAuthClick={() => setShowAuth(true)}
+        onLogout={handleLogout}
+      />
 
       <main className="flex-1">
         {renderCurrentView()}
@@ -385,20 +504,18 @@ const App: React.FC = () => {
 
       <AIChat />
 
-      <FomoNotification overrideMessage={notification} onCloseOverride={() => setNotification(null)} />
 
-
-      <div className="fixed bottom-10 right-10 z-[100] group flex items-center print:hidden">
-        <div className="mr-4 bg-white px-6 py-3 rounded-2xl shadow-2xl opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0 border border-gray-100 pointer-events-none">
-          <p className="text-[10px] font-black text-blue-900 uppercase tracking-widest whitespace-nowrap">Besoin d'aide ?</p>
+      <div className="fixed bottom-6 right-6 md:bottom-10 md:right-10 z-[100] group flex items-center print:hidden">
+        <div className="mr-4 bg-white px-4 md:px-6 py-2 md:py-3 rounded-2xl shadow-2xl opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0 border border-gray-100 pointer-events-none hidden sm:block">
+          <p className="text-[9px] md:text-[10px] font-black text-blue-900 uppercase tracking-widest whitespace-nowrap">Besoin d'aide ?</p>
         </div>
         <a
           href={WHATSAPP_LINK}
           target="_blank"
           rel="noopener noreferrer"
-          className="w-16 h-16 bg-[#25D366] text-white rounded-full shadow-[0_10px_40px_rgba(37,211,102,0.4)] flex items-center justify-center hover:scale-110 active:scale-95 transition-all relative"
+          className="w-14 h-14 md:w-16 md:h-16 bg-[#25D366] text-white rounded-full shadow-[0_10px_40px_rgba(37,211,102,0.4)] flex items-center justify-center hover:scale-110 active:scale-95 transition-all relative"
         >
-          <MessageSquare size={28} />
+          <MessageSquare size={24} className="md:w-7 md:h-7" />
           <div className="absolute inset-0 bg-[#25D366] rounded-full animate-ping opacity-20"></div>
         </a>
       </div>
@@ -453,7 +570,7 @@ const App: React.FC = () => {
         <PackageDetails pkg={viewingPackage} onBook={() => startBooking(viewingPackage.type, viewingPackage)} onClose={() => setViewingPackage(undefined)} />
       )}
 
-      {showAuth && <AuthOverlay onClose={() => setShowAuth(false)} onSuccess={handleAuthSuccess} />}
+      {showAuth && <AuthOverlay onClose={() => setShowAuth(false)} onSuccess={handleAuthSuccess} resendApiKey={resendApiKey} />}
     </div>
   );
 };

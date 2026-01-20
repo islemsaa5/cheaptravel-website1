@@ -14,6 +14,8 @@ export const DB_CONFIG = {
     PACKAGES: 'packages',
     BOOKINGS: 'bookings',
     SUBSCRIBERS: 'subscribers',
-    PROFILES: 'profiles'
+    PROFILES: 'profiles',
+    WALLET_REQUESTS: 'wallet_requests',
+    AGENCIES: 'agencies'
   }
 };

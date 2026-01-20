@@ -1,6 +1,6 @@
-
 import { dbService } from './dbService';
 import { User, UserRole } from '../types';
+import { notificationService } from './notificationService';
 
 const STORAGE_KEY = 'ct_user';
 
@@ -26,7 +26,7 @@ export const authService = {
 
     // --- ACTIONS ---
 
-    login: async (email: string, password: string): Promise<{ user: User | null; error?: string }> => {
+    login: async (email: string, password: string, requiredRole?: UserRole): Promise<{ user: User | null; error?: string }> => {
         const cleanEmail = email.trim().toLowerCase();
 
         // 1. ADMIN BACKDOOR (Hardcoded for safety/demo)
@@ -45,6 +45,10 @@ export const authService = {
 
         // 2. DEMO CLIENT (Hardcoded for demo)
         if (cleanEmail === 'client@demo.com' && password === 'demo') {
+            // Only allow if role is CLIENT or not specified
+            if (requiredRole && requiredRole !== 'CLIENT') {
+                return { user: null, error: "Cet accès est réservé aux clients standards." };
+            }
             const demo: User = {
                 id: 'CLIENT-DEMO',
                 fullName: 'Client VIP',
@@ -62,7 +66,13 @@ export const authService = {
             return { user: null, error: "Compte introuvable." };
         }
 
-        // 4. PASSWORD CHECK
+        // 4. ROLE CHECK
+        if (requiredRole && profile.role !== requiredRole) {
+            if (requiredRole === 'AGENT') return { user: null, error: "Identifiants invalides pour l'Espace Agence." };
+            if (requiredRole === 'CLIENT') return { user: null, error: "Identifiants invalides pour l'Espace Client." };
+        }
+
+        // 5. PASSWORD CHECK
         if (profile.password && profile.password !== password) {
             return { user: null, error: "Mot de passe incorrect." };
         }
@@ -72,13 +82,41 @@ export const authService = {
         return { user: profile };
     },
 
-    register: async (data: { email: string; password: string; fullName?: string; agencyName?: string; isAgent?: boolean }): Promise<{ user: User | null; error?: string }> => {
+    register: async (data: { email: string; password: string; fullName?: string; agencyName?: string; isAgent?: boolean; agencyAddress?: string; agencyPhone?: string }): Promise<{ user: User | null; error?: string }> => {
         const cleanEmail = data.email.trim().toLowerCase();
 
-        // 1. Check Existence
+        // 1. Check Uniqueness & Handle Upgrades
         const existing = await dbService.getProfileByEmail(cleanEmail);
         if (existing) {
-            return { user: null, error: "Cet email est déjà utilisé." };
+            // Case: Existing Client wants to become an Agent
+            if (data.isAgent && existing.role === 'CLIENT') {
+                if (existing.password === data.password) {
+                    // VALIDATION: Ensure agency details are filled
+                    if (!data.agencyName || !data.agencyAddress || !data.agencyPhone) {
+                        return { user: null, error: "Veuillez remplir tous les champs de l'agence (Nom, Adresse, Téléphone) pour transformer votre compte." };
+                    }
+
+                    // Logic to upgrade existing profile
+                    const upgradedUser: User = {
+                        ...existing,
+                        role: 'AGENT',
+                        status: 'PENDING',
+                        agencyName: data.agencyName,
+                        agencyAddress: data.agencyAddress,
+                        agencyPhone: data.agencyPhone,
+                        walletBalance: 0
+                    };
+                    await dbService.updateProfile(upgradedUser);
+                    authService.persistSession(upgradedUser);
+                    return { user: upgradedUser };
+                } else {
+                    return {
+                        user: null,
+                        error: "Cet email appartient déjà à un compte client. Pour transformer votre compte en compte Agence, veuillez entrer votre mot de passe actuel."
+                    };
+                }
+            }
+            return { user: null, error: "Cette adresse email ou ce nom d'utilisateur est déjà utilisé." };
         }
 
         // 2. Create Object
@@ -92,9 +130,11 @@ export const authService = {
             fullName: data.fullName || (data.isAgent ? data.agencyName || 'Agence' : 'Voyageur'),
             role: role,
             walletBalance: 0,
-            password: data.password, // Important for future logins
-            status: data.isAgent ? 'PENDING' : undefined, // Agents need approval
-            agencyName: data.agencyName
+            password: data.password,
+            status: data.isAgent ? 'PENDING' : undefined,
+            agencyName: data.agencyName,
+            agencyAddress: data.agencyAddress,
+            agencyPhone: data.agencyPhone
         };
 
         // 3. Save to DB
@@ -103,5 +143,33 @@ export const authService = {
         // 4. Persist Session
         authService.persistSession(newUser);
         return { user: newUser };
+    },
+
+    requestPasswordReset: async (email: string, apiKey?: string): Promise<{ success: boolean; error?: string }> => {
+        const cleanEmail = email.trim().toLowerCase();
+        const profile = await dbService.getProfileByEmail(cleanEmail);
+
+        if (!profile) {
+            return { success: false, error: "Aucun compte associé à cette adresse email." };
+        }
+
+        const resetLink = `${window.location.origin}${window.location.pathname}?mode=reset_password`;
+
+        // Use Notification Service to send/log the email
+        await notificationService.sendResetEmail(cleanEmail, resetLink, apiKey);
+
+        console.log(`[AUTH] Password reset requested for: ${cleanEmail}`);
+        console.log(`[AUTH] Simulated Email Link: ${resetLink}`);
+
+        return { success: true };
+    },
+
+    resetPassword: async (email: string, newPassword: string): Promise<{ success: boolean; error?: string }> => {
+        const profile = await dbService.getProfileByEmail(email);
+        if (!profile) return { success: false, error: "Compte introuvable." };
+
+        profile.password = newPassword;
+        await dbService.updateProfile(profile);
+        return { success: true };
     }
 };

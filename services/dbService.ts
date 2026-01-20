@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { TravelPackage, Booking, User, Subscriber } from '../types';
-import { MOCK_PACKAGES as INITIAL_PACKAGES } from '../constants';
+import { TravelPackage, Booking, User, Subscriber, WalletRequest } from '../types';
+import { MOCK_PACKAGES as INITIAL_PACKAGES, MOCK_BOOKINGS as INITIAL_BOOKINGS } from '../constants';
 import { DB_CONFIG } from '../config/database';
 
 const LOCAL_KEYS = {
@@ -19,7 +19,9 @@ const toCamelCase = (obj: any): any => {
   if (Array.isArray(obj)) return obj.map(v => toCamelCase(v));
   if (obj !== null && typeof obj === 'object') {
     return Object.keys(obj).reduce((result, key) => {
-      const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+      let camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+      // Special mapping for markup_pref
+      if (key === 'markup_pref') camelKey = 'markupPreference';
       result[camelKey] = toCamelCase(obj[key]);
       return result;
     }, {} as any);
@@ -32,7 +34,9 @@ const toSnakeCase = (obj: any): any => {
   if (Array.isArray(obj)) return obj.map(v => toSnakeCase(v));
   if (obj !== null && typeof obj === 'object') {
     return Object.keys(obj).reduce((result, key) => {
-      const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      let snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      // Special mapping for markupPreference
+      if (key === 'markupPreference') snakeKey = 'markup_pref';
       result[snakeKey] = toSnakeCase(obj[key]);
       return result;
     }, {} as any);
@@ -52,6 +56,8 @@ export const dbService = {
   // 1. GESTION DES OFFRES
   getPackages: async (): Promise<TravelPackage[]> => {
     let cloudData: TravelPackage[] = [];
+    let fetchError = null;
+
     try {
       const { data, error } = await supabase
         .from(DB_CONFIG.TABLES.PACKAGES)
@@ -61,37 +67,76 @@ export const dbService = {
       if (error) throw error;
       if (data) cloudData = toCamelCase(data);
     } catch (err) {
-      console.warn("Supabase Sync Failed (getPackages). Using Local.", err);
+      fetchError = err;
+      console.warn("[DB] Supabase Fetch Failed. Falling back to local cache.", err);
     }
 
     const localStr = localStorage.getItem(LOCAL_KEYS.PACKAGES);
     const localData: TravelPackage[] = localStr ? JSON.parse(localStr) : [];
-
-    // Check if we have initialized the DB before
     const isInitialized = localStorage.getItem('ct_db_initialized');
-    const deletedIdsStr = localStorage.getItem(LOCAL_KEYS.DELETED_IDS); // New
+
+    // MIGRATION / INITIALIZATION LOGIC
+    // If Cloud is empty but we have local/mock data, perform migration to Supabase
+    if (!fetchError && cloudData.length === 0) {
+      const dataToMigrate = localData.length > 0 ? localData : (!isInitialized ? INITIAL_PACKAGES : []);
+
+      if (dataToMigrate.length > 0) {
+        console.log(`[DB] Supabase is empty. Migrating ${dataToMigrate.length} items to Cloud...`);
+        try {
+          const { error: insertError } = await supabase
+            .from(DB_CONFIG.TABLES.PACKAGES)
+            .insert(toSnakeCase(dataToMigrate));
+
+          if (!insertError) {
+            console.log("[DB] Migration Successful.");
+            localStorage.setItem('ct_db_initialized', 'true');
+            cloudData = dataToMigrate;
+          } else {
+            console.error("[DB] Migration Failed.", insertError);
+          }
+        } catch (migErr) {
+          console.error("[DB] Migration Exception.", migErr);
+        }
+      }
+    }
+
+    // SOURCE OF TRUTH: 
+    // If we have Cloud data, use it.
+    // If Cloud is empty BUT we have Local data, use local (maybe it's not synced yet).
+    // If Cloud Fetch failed, use Local.
+    let finalData: TravelPackage[] = [];
+
+    if (cloudData.length > 0) {
+      finalData = cloudData;
+      console.log(`[DB] Using ${cloudData.length} packages from Cloud.`);
+    } else if (localData.length > 0) {
+      finalData = localData;
+      console.log(`[DB] Cloud is empty, using ${localData.length} local packages.`);
+    } else if (!isInitialized) {
+      finalData = INITIAL_PACKAGES;
+      console.log("[DB] No data found. Using Initial Mock Packages.");
+    }
+
+    // Filter out items marked as deleted locally as double safety
+    const deletedIdsStr = localStorage.getItem(LOCAL_KEYS.DELETED_IDS);
     const deletedIds: string[] = deletedIdsStr ? JSON.parse(deletedIdsStr) : [];
+    const filtered = finalData.filter(item => !deletedIds.includes(item.id) && !item.isDeleted);
 
-    // Initial Seed only if never initialized
-    if (!isInitialized && localData.length === 0 && cloudData.length === 0) {
-      localStorage.setItem(LOCAL_KEYS.PACKAGES, JSON.stringify(INITIAL_PACKAGES));
-      localStorage.setItem('ct_db_initialized', 'true');
-      return INITIAL_PACKAGES;
-    }
+    // Sync Local cache for offline use
+    localStorage.setItem(LOCAL_KEYS.PACKAGES, JSON.stringify(filtered));
+    return filtered;
+  },
 
-    // If initialized but empty, it means user deleted everything. Return empty.
-    if (isInitialized && localData.length === 0 && cloudData.length === 0) {
-      return [];
-    }
-
-    // Merge and Persist
-    let merged = mergeData(localData, cloudData);
-
-    // Filter out deleted items (Soft Delete Check + Local Blocklist)
-    merged = merged.filter(item => !deletedIds.includes(item.id) && !item.isDeleted);
-
-    localStorage.setItem(LOCAL_KEYS.PACKAGES, JSON.stringify(merged));
-    return merged;
+  getB2BPackages: async (): Promise<TravelPackage[]> => {
+    // Specifically fetch b2b only packages
+    try {
+      const { data } = await supabase
+        .from(DB_CONFIG.TABLES.PACKAGES)
+        .select('*')
+        .eq('is_b2b_only', true)
+        .eq('is_deleted', false);
+      return data ? toCamelCase(data) : [];
+    } catch { return []; }
   },
 
   savePackage: async (pkg: TravelPackage): Promise<TravelPackage[]> => {
@@ -131,6 +176,8 @@ export const dbService = {
   },
 
   deletePackage: async (id: string): Promise<TravelPackage[]> => {
+    console.log(`[DB] Attempting to delete package: ${id}`);
+
     // 0. Add to Deleted Blocklist (Legacy/Double Safety)
     const deletedIdsStr = localStorage.getItem(LOCAL_KEYS.DELETED_IDS);
     const deletedIds: string[] = deletedIdsStr ? JSON.parse(deletedIdsStr) : [];
@@ -139,29 +186,34 @@ export const dbService = {
       localStorage.setItem(LOCAL_KEYS.DELETED_IDS, JSON.stringify(deletedIds));
     }
 
-    // 1. SOFT DELETE STRATEGY: Update the item with isDeleted: true
-    // We try to find the item first to preserve its other fields
-    const allPkgs = await dbService.getPackages();
-    const pkg = allPkgs.find(p => p.id === id);
+    // 1. Force Local Removal First (Immediate UI Feedback)
+    const localStr = localStorage.getItem(LOCAL_KEYS.PACKAGES);
+    let localData: TravelPackage[] = localStr ? JSON.parse(localStr) : [];
+    localData = localData.filter(p => p.id !== id);
+    localStorage.setItem(LOCAL_KEYS.PACKAGES, JSON.stringify(localData));
 
-    if (pkg) {
-      const softDeletedPkg = { ...pkg, isDeleted: true };
-      await dbService.savePackage(softDeletedPkg); // This pushes to cloud and updates local
-    } else {
-      // Fallback if not found in list (weird), just ensure local removal
-      const localStr = localStorage.getItem(LOCAL_KEYS.PACKAGES);
-      const localData: TravelPackage[] = localStr ? JSON.parse(localStr) : [];
-      const updated = localData.filter(p => p.id !== id);
-      localStorage.setItem(LOCAL_KEYS.PACKAGES, JSON.stringify(updated));
+    // 2. HARD DELETE STRATEGY in Cloud
+    try {
+      const { error } = await supabase
+        .from(DB_CONFIG.TABLES.PACKAGES)
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      console.log("[DB] Cloud Sync: Package deleted forever from database");
+    } catch (err) {
+      console.error("[DB] Supabase Hard Delete Failed.", err);
+      alert("Note: Suppression locale réussie, mais échec de suppression définitive sur le cloud. Vérifiez votre connexion.");
     }
 
-    const updated = await dbService.getPackages();
-    return updated;
+    return localData;
   },
 
   // 2. GESTION DES RÉSERVATIONS
   getBookings: async (): Promise<Booking[]> => {
     let cloudData: Booking[] = [];
+    let fetchError = null;
+
     try {
       const { data, error } = await supabase
         .from(DB_CONFIG.TABLES.BOOKINGS)
@@ -171,21 +223,44 @@ export const dbService = {
       if (error) throw error;
       if (data) cloudData = toCamelCase(data);
     } catch (err) {
-      console.warn("Supabase Sync Failed (getBookings). Using Local.", err);
+      fetchError = err;
+      console.warn("[DB] Supabase Bookings Sync Failed.", err);
     }
 
     const localStr = localStorage.getItem(LOCAL_KEYS.BOOKINGS);
     const localData: Booking[] = localStr ? JSON.parse(localStr) : [];
+    const isInitialized = localStorage.getItem('ct_db_initialized');
+
+    // Migrate if Cloud is empty
+    if (!fetchError && cloudData.length === 0) {
+      const dataToMigrate = localData.length > 0 ? localData : (!isInitialized ? INITIAL_BOOKINGS : []);
+
+      if (dataToMigrate.length > 0) {
+        console.log(`[DB] Supabase is empty. Migrating ${dataToMigrate.length} bookings to Cloud...`);
+        try {
+          await supabase.from(DB_CONFIG.TABLES.BOOKINGS).insert(toSnakeCase(dataToMigrate));
+          cloudData = dataToMigrate;
+        } catch (migErr) { console.error("[DB] Bookings Migration Failed.", migErr); }
+      }
+    }
+
+    // SOURCE OF TRUTH: Same logic as packages
+    let finalData: Booking[] = [];
+    if (cloudData.length > 0) {
+      finalData = cloudData;
+    } else if (localData.length > 0) {
+      finalData = localData;
+    } else if (!isInitialized) {
+      // Fallback to initial mock bookings if first run
+      finalData = typeof INITIAL_BOOKINGS !== 'undefined' ? INITIAL_BOOKINGS : [];
+    }
 
     const deletedIdsStr = localStorage.getItem(LOCAL_KEYS.DELETED_IDS);
     const deletedIds: string[] = deletedIdsStr ? JSON.parse(deletedIdsStr) : [];
+    const filtered = finalData.filter(item => !deletedIds.includes(item.id));
 
-    // Merge and Persist
-    let merged = mergeData(localData, cloudData);
-    merged = merged.filter(item => !deletedIds.includes(item.id));
-
-    localStorage.setItem(LOCAL_KEYS.BOOKINGS, JSON.stringify(merged));
-    return merged;
+    localStorage.setItem(LOCAL_KEYS.BOOKINGS, JSON.stringify(filtered));
+    return filtered;
   },
 
   saveBooking: async (booking: Booking): Promise<Booking[]> => {
@@ -245,46 +320,55 @@ export const dbService = {
   },
 
   deleteBooking: async (id: string): Promise<Booking[]> => {
-    // 0. Add to Deleted Blocklist
-    const deletedIdsStr = localStorage.getItem(LOCAL_KEYS.DELETED_IDS);
-    const deletedIds: string[] = deletedIdsStr ? JSON.parse(deletedIdsStr) : [];
-    if (!deletedIds.includes(id)) {
-      deletedIds.push(id);
-      localStorage.setItem(LOCAL_KEYS.DELETED_IDS, JSON.stringify(deletedIds));
-    }
+    console.log(`[DB] Deleting booking: ${id}`);
 
-    // 1. Optimistic Update
+    // 1. Local Cache Update
     const localStr = localStorage.getItem(LOCAL_KEYS.BOOKINGS);
-    const localData: Booking[] = localStr ? JSON.parse(localStr) : [];
-    const updated = localData.filter(b => b.id !== id);
-    localStorage.setItem(LOCAL_KEYS.BOOKINGS, JSON.stringify(updated));
+    let localData: Booking[] = localStr ? JSON.parse(localStr) : [];
+    localData = localData.filter(b => b.id !== id);
+    localStorage.setItem(LOCAL_KEYS.BOOKINGS, JSON.stringify(localData));
 
-    // 2. Cloud Delete
+    // 2. Cloud Hard Delete
     try {
-      if (DB_CONFIG.SUPABASE_URL && !DB_CONFIG.SUPABASE_URL.includes('YOUR_PROJECT')) {
-        await supabase.from(DB_CONFIG.TABLES.BOOKINGS).delete().eq('id', id);
-      }
+      const { error } = await supabase.from(DB_CONFIG.TABLES.BOOKINGS).delete().eq('id', id);
+      if (error) throw error;
+      console.log("[DB] Booking deleted from Cloud");
     } catch (err) {
-      console.error("Supabase Delete Failed.", err);
+      console.error("[DB] Supabase Booking Delete Failed.", err);
     }
 
-    return updated;
+    return localData;
   },
 
   // 3. MARKETING
   getSubscribers: async (): Promise<Subscriber[]> => {
     let cloudData: Subscriber[] = [];
+    let fetchError = null;
+
     try {
-      const { data } = await supabase.from(DB_CONFIG.TABLES.SUBSCRIBERS).select('*').order('subscribedAt', { ascending: false });
+      const { data, error } = await supabase.from(DB_CONFIG.TABLES.SUBSCRIBERS).select('*').order('subscribed_at', { ascending: false });
+      if (error) throw error;
       if (data) cloudData = toCamelCase(data);
-    } catch (err) { console.warn("Supabase Subscribers Sync Failed.", err); }
+    } catch (err) {
+      fetchError = err;
+      console.warn("[DB] Supabase Subscribers Sync Failed.", err);
+    }
 
     const localStr = localStorage.getItem(LOCAL_KEYS.SUBSCRIBERS);
-    const localData = localStr ? JSON.parse(localStr) : [];
+    const localData: Subscriber[] = localStr ? JSON.parse(localStr) : [];
 
-    const merged = mergeData(localData, cloudData);
-    localStorage.setItem(LOCAL_KEYS.SUBSCRIBERS, JSON.stringify(merged));
-    return merged;
+    // Migrate if Cloud is empty
+    if (!fetchError && cloudData.length === 0 && localData.length > 0) {
+      console.log(`[DB] Migrating ${localData.length} subscribers to Cloud...`);
+      try {
+        await supabase.from(DB_CONFIG.TABLES.SUBSCRIBERS).insert(toSnakeCase(localData));
+        cloudData = localData;
+      } catch (migErr) { console.error("[DB] Subscribers Migration Failed.", migErr); }
+    }
+
+    const finalData = fetchError ? localData : cloudData;
+    localStorage.setItem(LOCAL_KEYS.SUBSCRIBERS, JSON.stringify(finalData));
+    return finalData;
   },
 
   addSubscriber: async (email: string): Promise<Subscriber[]> => {
@@ -307,51 +391,159 @@ export const dbService = {
     return updated;
   },
 
+  deleteSubscriber: async (id: string): Promise<Subscriber[]> => {
+    console.log(`[DB] Deleting subscriber: ${id}`);
+
+    // 1. Cloud Hard Delete
+    try {
+      const { error } = await supabase.from(DB_CONFIG.TABLES.SUBSCRIBERS).delete().eq('id', id);
+      if (error) throw error;
+    } catch (err) {
+      console.error("Supabase Subscriber Delete Failed.", err);
+    }
+
+    // 2. Local Update
+    const localStr = localStorage.getItem(LOCAL_KEYS.SUBSCRIBERS);
+    const localData: Subscriber[] = localStr ? JSON.parse(localStr) : [];
+    const updated = localData.filter(s => s.id !== id);
+    localStorage.setItem(LOCAL_KEYS.SUBSCRIBERS, JSON.stringify(updated));
+    return updated;
+  },
+
   // 4. PROFILS ET AUTHENTIFICATION
   getAgents: async (): Promise<User[]> => {
-    let cloudData: User[] = [];
     try {
-      const { data } = await supabase.from(DB_CONFIG.TABLES.PROFILES)
-        .select('*')
+      // Join profiles and agencies to get complete agent data
+      const { data, error } = await supabase
+        .from(DB_CONFIG.TABLES.PROFILES)
+        .select(`
+          *,
+          agencies:agencies(*)
+        `)
         .eq('role', 'AGENT')
         .order('created_at', { ascending: false });
-      if (data) cloudData = toCamelCase(data);
-    } catch (err) { console.warn("Supabase Agents Sync Failed.", err); }
 
-    // Fallback/Merge with local profiles not yet simulated perfectly for lists but we try typical pattern or just return cloud/mock
-    // For this prototype, we'll try to fetch all profiles from local storage if we can, or just rely on cloud + basic local check
-    // Since we don't have a 'getProfiles' local key effectively used for *all* profiles (just individual keys usually), 
-    // we might need to assume cloud is primary or use a specific list key if we had one.
-    // Let's assume for now, if offline, we might not see new agents unless we stored them in a list. 
-    // BUT we do have 'ct_db_profiles' key usage in LOCAL_KEYS. Let's see if we store a list or map there.
+      if (error) throw error;
 
-    // Actually, looking at updateProfile, it blindly upserts to Supabase and returns. It doesn't seem to update a big "ALL PROFILES" list in local storage. 
-    // It seems 'ct_user' is the only local persistence for the *current* user. 
-    // To support listing agents locally, we need to start tracking them in a list.
-
-    return cloudData;
+      if (data) {
+        return data.map(item => {
+          const agency = item.agencies;
+          const user = toCamelCase(item);
+          if (agency) {
+            const agencyData = toCamelCase(agency);
+            return {
+              ...user,
+              ...agencyData,
+              id: user.id // id is common
+            };
+          }
+          return user;
+        });
+      }
+    } catch (err) {
+      console.error("Fetch Agents Failed", err);
+    }
+    return [];
   },
 
-  getProfile: async (userId: string): Promise<User | null> => {
-    try {
-      const { data } = await supabase.from(DB_CONFIG.TABLES.PROFILES).select('*').eq('id', userId).single();
-      return data ? toCamelCase(data) : null;
-    } catch (err) { return null; }
-  },
+
 
   getProfileByEmail: async (email: string): Promise<User | null> => {
     try {
-      const { data } = await supabase.from(DB_CONFIG.TABLES.PROFILES).select('*').eq('email', email.toLowerCase()).single();
-      return data ? toCamelCase(data) : null;
-    } catch (err) { return null; }
+      const { data, error } = await supabase
+        .from(DB_CONFIG.TABLES.PROFILES)
+        .select(`
+          *,
+          agencies:agencies(*)
+        `)
+        .eq('email', email.toLowerCase())
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) return null;
+
+      const user = toCamelCase(data);
+      if (data.agencies) {
+        // Handle both single object and array from Supabase join
+        const rawAgency = Array.isArray(data.agencies) ? data.agencies[0] : data.agencies;
+        if (rawAgency) {
+          const agencyData = toCamelCase(rawAgency);
+          return { ...user, ...agencyData, id: user.id };
+        }
+      }
+      return user;
+    } catch (err) {
+      console.error("Get Profile By Email Failed", err);
+      return null;
+    }
   },
 
   updateProfile: async (user: User): Promise<User> => {
     try {
-      const { data } = await supabase.from(DB_CONFIG.TABLES.PROFILES).upsert(toSnakeCase(user), { onConflict: 'id' }).select().single();
-      if (data) return toCamelCase(data);
-    } catch (err) { console.error("Profile Update Failed", err); }
+      // 1. Update Core Profile
+      const profileData = toSnakeCase({
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        avatar: user.avatar,
+        password: user.password
+      });
+
+      const { error: profError } = await supabase
+        .from(DB_CONFIG.TABLES.PROFILES)
+        .upsert(profileData);
+
+      if (profError) throw profError;
+
+      // 2. If Agent, update Agency Details
+      if (user.role === 'AGENT') {
+        const agencyData = toSnakeCase({
+          id: user.id,
+          agencyName: user.agencyName,
+          agencyAddress: user.agencyAddress,
+          agencyPhone: user.agencyPhone,
+          walletBalance: user.walletBalance,
+          markupPreference: user.markupPreference,
+          status: user.status
+        });
+
+        const { error: agencyError } = await supabase
+          .from(DB_CONFIG.TABLES.AGENCIES)
+          .upsert(agencyData);
+
+        if (agencyError) throw agencyError;
+      }
+    } catch (err) {
+      console.error("Profile/Agency Update Failed", err);
+    }
     return user;
+  },
+
+  getProfile: async (id: string): Promise<User | null> => {
+    try {
+      const { data, error } = await supabase
+        .from(DB_CONFIG.TABLES.PROFILES)
+        .select(`
+          *,
+          agencies:agencies(*)
+        `)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) return null;
+
+      const user = toCamelCase(data);
+      if (data.agencies) {
+        const agencyData = toCamelCase(data.agencies);
+        return { ...user, ...agencyData, id: user.id };
+      }
+      return user;
+    } catch (err) {
+      console.error("Fetch Profile Failed", err);
+      return null;
+    }
   },
 
   resetToFactory: async (): Promise<TravelPackage[]> => {
@@ -359,7 +551,85 @@ export const dbService = {
     localStorage.removeItem(LOCAL_KEYS.BOOKINGS);
     localStorage.removeItem(LOCAL_KEYS.SUBSCRIBERS);
     localStorage.setItem(LOCAL_KEYS.PACKAGES, JSON.stringify(INITIAL_PACKAGES));
+    localStorage.setItem(LOCAL_KEYS.BOOKINGS, JSON.stringify(INITIAL_BOOKINGS));
     return INITIAL_PACKAGES;
+  },
+
+  // 5. WALLET & B2B FINANCE (NOUVEAU)
+  getWalletRequests: async (agencyId?: string): Promise<WalletRequest[]> => {
+    try {
+      let query = supabase.from(DB_CONFIG.TABLES.WALLET_REQUESTS).select('*').order('created_at', { ascending: false });
+      if (agencyId) query = query.eq('agency_id', agencyId);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data ? toCamelCase(data) : [];
+    } catch (err) {
+      console.error("Fetch Wallet Requests Failed", err);
+      return [];
+    }
+  },
+
+  createWalletRequest: async (req: Partial<WalletRequest>): Promise<void> => {
+    const dbReq = toSnakeCase({
+      ...req,
+      id: 'WRQ-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
+      status: 'PENDING',
+      createdAt: new Date().toISOString()
+    });
+
+    const { error } = await supabase.from(DB_CONFIG.TABLES.WALLET_REQUESTS).insert(dbReq);
+    if (error) {
+      console.error("Wallet Request DB Error:", error);
+      throw new Error(error.message);
+    }
+  },
+
+  updateWalletRequestStatus: async (requestId: string, status: 'APPROVED' | 'REJECTED', agencyId: string, amount: number): Promise<void> => {
+    try {
+      // 1. Update Request
+      const { error: reqError } = await supabase
+        .from(DB_CONFIG.TABLES.WALLET_REQUESTS)
+        .update({ status })
+        .eq('id', requestId);
+
+      if (reqError) throw reqError;
+
+      // 2. If approved, top up agent wallet
+      if (status === 'APPROVED') {
+        const { data: profile, error: profError } = await supabase
+          .from(DB_CONFIG.TABLES.AGENCIES)
+          .select('wallet_balance')
+          .eq('id', agencyId)
+          .single();
+
+        if (profError) throw profError;
+
+        if (profile) {
+          const newBalance = (profile.wallet_balance || 0) + amount;
+          const { error: updateError } = await supabase
+            .from(DB_CONFIG.TABLES.AGENCIES)
+            .update({ wallet_balance: newBalance })
+            .eq('id', agencyId);
+
+          if (updateError) throw updateError;
+        }
+      }
+    } catch (err: any) {
+      console.error("Update Wallet Failed", err);
+      throw new Error(err.message || "Erreur lors de la mise à jour du portefeuille");
+    }
+  },
+
+  deleteProfile: async (id: string): Promise<User[]> => {
+    console.log(`[DB] Deleting profile: ${id}`);
+    try {
+      const { error } = await supabase.from(DB_CONFIG.TABLES.PROFILES).delete().eq('id', id);
+      if (error) throw error;
+    } catch (err) {
+      console.error("Profile Delete Failed", err);
+    }
+    return dbService.getAgents();
   },
 
   getDbStatus: () => {

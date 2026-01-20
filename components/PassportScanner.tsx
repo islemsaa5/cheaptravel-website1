@@ -16,8 +16,8 @@ const PassportScanner: React.FC<PassportScannerProps> = ({ onCapture, onClose })
 
   const startCamera = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
       });
       setStream(mediaStream);
       if (videoRef.current) {
@@ -36,17 +36,25 @@ const PassportScanner: React.FC<PassportScannerProps> = ({ onCapture, onClose })
     };
   }, []);
 
-  const captureImage = () => {
-    if (videoRef.current && canvasRef.current) {
+  const captureImage = async () => {
+    if (videoRef.current && canvasRef.current && !isCapturing) {
       const context = canvasRef.current.getContext('2d');
       if (context) {
+        setIsCapturing(true);
         canvasRef.current.width = videoRef.current.videoWidth;
         canvasRef.current.height = videoRef.current.videoHeight;
         context.drawImage(videoRef.current, 0, 0);
         const dataUrl = canvasRef.current.toDataURL('image/jpeg');
-        onCapture(dataUrl);
-        setIsCapturing(true);
-        setTimeout(() => onClose(), 1500);
+
+        try {
+          const { extractPassportData } = await import('../services/geminiService');
+          const data = await extractPassportData(dataUrl);
+          onCapture(JSON.stringify({ ...data, image: dataUrl }));
+          setTimeout(() => onClose(), 1000);
+        } catch (err: any) {
+          setError(err.message || "Erreur de lecture AI");
+          setIsCapturing(false);
+        }
       }
     }
   };
@@ -71,9 +79,10 @@ const PassportScanner: React.FC<PassportScannerProps> = ({ onCapture, onClose })
               <p className="text-white text-sm">{error}</p>
             </div>
           ) : isCapturing ? (
-            <div className="text-center animate-pulse">
-              <CheckCircle2 size={64} className="text-green-500 mx-auto mb-4" />
-              <p className="text-white font-bold">Passport Captured!</p>
+            <div className="text-center p-8">
+              <RefreshCw size={64} className="text-orange-500 mx-auto mb-4 animate-spin" />
+              <p className="text-white font-black text-xl">L'IA de Cheap Travel lit votre passeport...</p>
+              <p className="text-gray-400 text-xs mt-2 uppercase tracking-widest">Extraction des données en cours</p>
             </div>
           ) : (
             <>
@@ -92,7 +101,7 @@ const PassportScanner: React.FC<PassportScannerProps> = ({ onCapture, onClose })
 
         <div className="p-6 bg-gray-800 flex justify-center space-x-4">
           {!error && !isCapturing && (
-            <button 
+            <button
               onClick={captureImage}
               className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-2xl flex items-center space-x-2 shadow-xl shadow-orange-500/20 active:scale-95 transition-all"
             >

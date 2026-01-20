@@ -7,66 +7,124 @@ import { TravelPackage } from "../types";
 const mockAIResponse = (prompt: string, context: TravelPackage[]): string => {
   const pLower = prompt.toLowerCase();
 
-  if (pLower.includes('bonjour') || pLower.includes('salut')) {
-    return "Bonjour ! Je suis l'assistant Cheap Travel. Je vois que nous avons actuellement " + context.length + " offres disponibles. Comment puis-je vous aider ?";
+  if (pLower.includes('bonjour') || pLower.includes('salut') || pLower.includes('hello')) {
+    return `Bonjour ! Ravi de vous voir. Nous avons ${context.length} offres disponibles aujourd'hui. Comment puis-je vous renseigner sur nos prestations ?`;
   }
 
   if (pLower.includes('visa')) {
-    const visaPackages = context.filter(p => p.type.includes('VISA'));
-    if (visaPackages.length > 0) {
-      return `Nous avons ${visaPackages.length} options de Visa / E-Visa disponibles, notamment : ${visaPackages.map(p => p.title).join(', ')}. Souhaitez-vous des détails ?`;
+    const visas = context.filter(p => p.type.includes('VISA'));
+    if (visas.length > 0) {
+      return `Nous avons des services de Visa pour : ${visas.map(v => v.title).join(', ')}. Lequel vous intéresse ?`;
     }
-    return "Nous proposons des services de Visa pour de nombreuses destinations. Dites-moi quel pays vous intéresse.";
+    return "Nous traitons les visas pour de nombreuses destinations (Dubaï, Turquie, Europe...). Précisez le pays souhaité !";
   }
 
-  if (pLower.includes('omrah') || pLower.includes('haj')) {
-    const omrah = context.filter(p => p.type === 'OMRAH');
-    if (omrah.length > 0) {
-      return `Pour l'Omrah, nous avons des offres exceptionnelles comme "${omrah[0].title}" à partir de ${omrah[0].price.toLocaleString()} DA.`;
-    }
+  if (pLower.includes('omrah') || pLower.includes('omra')) {
+    return "Nos packages Omrah incluent le vol, l'hôtel et le visa. Quel mois souhaitez-vous partir ?";
   }
 
-  if (pLower.includes('prix') || pLower.includes('cout')) {
-    const cheapest = [...context].sort((a, b) => a.price - b.price)[0];
-    if (cheapest) return `Nos offres commencent à partir de ${cheapest.price.toLocaleString()} DA avec "${cheapest.title}".`;
+  if (pLower.includes('prix') || pLower.includes('tarif') || pLower.includes('combien')) {
+    return "Nos tarifs dépendent de la saison. Les vols commencent à 25.000 DA et les Visas à 15.000 DA. Souhaitez-vous un devis précis ?";
   }
 
-  return "Je peux vous renseigner sur nos offres de Vols, Visas et Omrah. N'hésitez pas à me poser une question précise sur nos destinations !";
+  if (pLower.includes('test')) {
+    return "Test reçu ! Je suis branché et prêt à vous aider. Demandez-moi n'importe quoi sur nos voyages.";
+  }
+
+  // Very dynamic fallback
+  const randomFallbacks = [
+    "C'est une excellente question. Pour vous répondre précisément, auriez-vous une destination ou une date en tête ?",
+    "Je peux vous renseigner sur les Visas, l'Omrah ou nos Voyages Organisés. Que préférez-vous ?",
+    "Désolé, je n'ai pas bien saisi votre demande. Pourriez-vous reformuler votre question sur nos services de voyage ?",
+    "Nous avons beaucoup d'offres en ce moment ! Vous cherchez plutôt un vol sec ou un séjour complet ?"
+  ];
+
+  return randomFallbacks[Math.floor(Math.random() * randomFallbacks.length)];
 };
 
 export const getTravelAdvice = async (prompt: string, contextData: TravelPackage[] = []) => {
-  // VITE_GEMINI_API_KEY is the standard for Vite env vars
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  // Check multiple variable locations because of custom vite.config.ts
+  const apiKey =
+    (import.meta as any).env?.VITE_GEMINI_API_KEY ||
+    (import.meta as any).env?.GEMINI_API_KEY ||
+    (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : '') ||
+    '';
 
-  // Use Mock if no key or placeholder
-  if (!apiKey || apiKey.includes('PLACEHOLDER')) {
-    console.warn("Gemini API Key missing. Using Mock AI.");
-    await new Promise(r => setTimeout(r, 1000)); // Simulate network latency
+  console.log("DEBUG AI: Searching for key...", apiKey ? "Key found (starts with " + apiKey.substring(0, 4) + ")" : "No key found");
+
+  // Basic validation: must start with AIza
+  if (!apiKey || !apiKey.trim().startsWith('AIza')) {
+    console.warn("Gemini Service: No valid API key found. Falling back to Mock.");
     return mockAIResponse(prompt, contextData);
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  try {
+    // Masked log for debugging
+    console.log(`Gemini Service: Initializing with key ${apiKey.substring(0, 6)}...`);
+
+    // SDK 1.x pattern
+    const genAI = new (GoogleGenAI as any)(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    const contextStr = contextData.length > 0
+      ? `Voici mes offres actuelles :\n${contextData.map(p => `- ${p.title} (${p.price} DA)`).join('\n')}`
+      : "Aucune offre spécifique en catalogue pour le moment.";
+
+    const fullPrompt = `${contextStr}\n\nEn tant qu'expert Cheap Travel, réponds à : ${prompt}`;
+
+    const result = await model.generateContent(fullPrompt);
+    const response = await result.response;
+    const text = response.text();
+
+    if (text) return text;
+    return "L'IA a répondu mais le texte est vide.";
+
+  } catch (error: any) {
+    console.error("Gemini API Error:", error);
+    if (error.message?.includes('403') || error.message?.includes('key')) {
+      return "Erreur d'authentification IA (403). Ma clé API est peut-être restreinte ou invalide.";
+    }
+    return mockAIResponse(prompt, contextData);
+  }
+};
+
+export const extractPassportData = async (base64Image: string) => {
+  const apiKey =
+    (import.meta as any).env?.VITE_GEMINI_API_KEY ||
+    (import.meta as any).env?.GEMINI_API_KEY ||
+    (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : '') ||
+    '';
+
+  if (!apiKey || !apiKey.trim().startsWith('AIza')) {
+    throw new Error("Clé API Gemini manquante pour le scanner.");
+  }
 
   try {
-    const contextStr = contextData.map(p => `- ${p.title} (${p.type}): ${p.price} DA`).join('\n');
-    const fullPrompt = `Context (Offres disponibles):\n${contextStr}\n\nQuestion Client: ${prompt}`;
+    const genAI = new (GoogleGenAI as any)(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp', // Updated to latest/valid model if possible, or fallback
-      contents: fullPrompt,
-      config: {
-        systemInstruction: "Tu es un assistant expert pour l'agence 'Cheap Travel'. Utilise le contexte des offres ci-dessus pour répondre. Réponds en français, de manière courte et commerciale.",
-        temperature: 0.7,
+    // Clean base64
+    const base64Data = base64Image.split(',')[1] || base64Image;
+
+    const prompt = `Extraire les informations de ce passeport en format JSON uniquement avec les clés : 
+    "firstName" (Prénom), "lastName" (Nom de famille), "dateOfBirth" (Format YYYY-MM-DD), "passportNumber".
+    Si une donnée est illisible, laisse-la vide. Ne mets pas de bloc de code markdown, juste le JSON pur.`;
+
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: base64Data,
+          mimeType: "image/jpeg"
+        }
       }
-    });
+    ]);
 
-    // In @google/genai, text can be a direct property depending on version/response type wrapper
-    // Safely accessing it
-    return (response as any).text || "Je n'ai pas pu générer de réponse.";
-
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    // Fallback to mock instead of scary error
-    return mockAIResponse(prompt, contextData);
+    const response = await result.response;
+    const text = response.text().replace(/```json|```/g, '').trim();
+    return JSON.parse(text);
+  } catch (error: any) {
+    console.error("OCR Error:", error);
+    throw new Error("Erreur de lecture du passeport. Essayez de reprendre la photo.");
   }
 };
